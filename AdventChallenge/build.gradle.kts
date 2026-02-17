@@ -1,7 +1,8 @@
 plugins {
     kotlin("jvm") version "2.2.0"
     kotlin("plugin.serialization") version "2.2.0"
-    application
+    id("org.jetbrains.compose") version "1.7.3"
+    id("org.jetbrains.kotlin.plugin.compose") version "2.2.0"
 }
 
 group = "org.example"
@@ -9,6 +10,8 @@ version = "1.0-SNAPSHOT"
 
 repositories {
     mavenCentral()
+    maven("https://maven.pkg.jetbrains.space/public/p/compose/dev")
+    google()
 }
 
 val ktorVersion = "3.0.3"
@@ -20,6 +23,7 @@ dependencies {
     implementation("io.ktor:ktor-client-content-negotiation:$ktorVersion")
     implementation("io.ktor:ktor-serialization-kotlinx-json:$ktorVersion")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+    implementation(compose.desktop.currentOs)
 }
 
 tasks.test {
@@ -27,9 +31,16 @@ tasks.test {
 }
 
 kotlin {
-    jvmToolchain(18)
+    jvmToolchain(17)
 }
 
-application {
-    mainClass.set("lesson1.BothubClientKt")
+compose.desktop {
+    application {
+        mainClass = "org.bothubclient.MainKt"
+        nativeDistributions {
+            targetFormats(org.jetbrains.compose.desktop.application.dsl.TargetFormat.Exe)
+            packageName = "BothubClient"
+            packageVersion = "1.0.0"
+        }
+    }
 }
