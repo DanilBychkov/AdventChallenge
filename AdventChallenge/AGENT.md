@@ -3,65 +3,142 @@
 ## Обзор проекта
 
 Bothub Client — это десктопное приложение для взаимодействия с LLM через Bothub API. Приложение построено на Kotlin с
-использованием Jetbrains Compose для GUI и Ktor для HTTP-запросов.
+использованием Jetbrains Compose для GUI и Ktor для HTTP-запросов. Архитектура следует принципам Clean Architecture с
+разделением на слои: domain, application, infrastructure, presentation.
 
 ## Архитектура
 
-### Структура проекта
+### Структура проекта (Clean Architecture)
 
 ```
-AdventChallenge/
-├── src/main/kotlin/
-│   ├── lesson1/
-│   │   ├── BothubClient.kt    # API клиент и конфигурация
-│   │   └── BothubGui.kt       # GUI на Jetbrains Compose
-│   └── Main.kt                # Альтернативная точка входа
-├── build.gradle.kts           # Конфигурация сборки Gradle
-└── gradle.properties          # Настройки Gradle
+org.bothubclient/
+├── config/                          # Конфигурации
+│   ├── ApiConfig.kt                 # URL API и константы
+│   ├── AvailableModels.kt           # Доступные модели ИИ
+│   └── SystemPrompts.kt             # Системные промпты
+│
+├── domain/                          # Domain слой (бизнес-логика)
+│   ├── entity/
+│   │   ├── Message.kt               # Сущность сообщения
+│   │   ├── ChatRequest.kt           # Запрос к чату
+│   │   └── ChatResult.kt            # Результат (sealed class)
+│   └── repository/
+│       ├── ChatRepository.kt        # Интерфейс репозитория
+│       └── ApiKeyProvider.kt        # Интерфейс провайдера ключа
+│
+├── application/                     # Application слой (use-cases)
+│   └── usecase/
+│       ├── SendMessageUseCase.kt    # Отправка сообщения
+│       ├── GetAvailableModelsUseCase.kt
+│       ├── GetSystemPromptsUseCase.kt
+│       └── ValidateApiKeyUseCase.kt
+│
+├── infrastructure/                  # Infrastructure слой
+│   ├── api/
+│   │   ├── ApiModels.kt             # DTO для API (сериализация)
+│   │   └── BothubChatRepository.kt  # Реализация ChatRepository
+│   ├── config/
+│   │   └── EnvironmentApiKeyProvider.kt  # Реализация ApiKeyProvider
+│   └── di/
+│       └── ServiceLocator.kt        # DI контейнер (Singleton)
+│
+├── presentation/                    # Presentation слой (UI)
+│   ├── ui/
+│   │   ├── components/              # Переиспользуемые UI компоненты
+│   │   │   ├── ChatInputField.kt
+│   │   │   ├── DropdownSelector.kt
+│   │   │   ├── ErrorCard.kt
+│   │   │   ├── MessageBubble.kt
+│   │   │   └── SendButton.kt
+│   │   ├── screen/
+│   │   │   └── ChatScreen.kt        # Главный экран
+│   │   └── theme/
+│   │       ├── AppColors.kt
+│   │       └── BothubTheme.kt
+│   └── viewmodel/
+│       └── ChatViewModel.kt         # Управление состоянием UI
+│
+└── Main.kt                          # Точка входа
 ```
+
+### Принципы архитектуры
+
+#### SOLID
+
+- **Single Responsibility** — каждый класс имеет одну ответственность
+- **Open/Closed** — интерфейсы позволяют расширять без изменения существующего кода
+- **Liskov Substitution** — реализации можно заменять (ChatRepository, ApiKeyProvider)
+- **Interface Segregation** — узкоспециализированные интерфейсы
+- **Dependency Inversion** — зависимость от абстракций (интерфейсов в domain/repository)
+
+#### DRY (Don't Repeat Yourself)
+
+- Константы вынесены в config/
+- UI компоненты переиспользуемы
+- ServiceLocator централизует создание зависимостей
+
+#### KISS (Keep It Simple, Stupid)
+
+- Чёткое разделение слоёв
+- Прямолинейная структура use-cases
+- Понятные имена файлов и классов
 
 ### Ключевые компоненты
 
-#### 1. BothubConfig (BothubClient.kt)
+#### 1. Config слой
 
-Центральный объект конфигурации:
+Отдельные файлы для конфигураций:
 
-- `API_URL` — endpoint для Bothub API
-- `AVAILABLE_MODELS` — список поддерживаемых моделей (GPT-4, Claude, Gemini, Grok, DeepSeek, Llama)
-- `SYSTEM_PROMPTS` — предустановленные системные промты для разных сценариев
-- `DEFAULT_MODEL` / `DEFAULT_PROMPT` — значения по умолчанию
+- [AvailableModels.kt](src/main/kotlin/org/bothubclient/config/AvailableModels.kt) — список моделей
+- [SystemPrompts.kt](src/main/kotlin/org/bothubclient/config/SystemPrompts.kt) — системные промпты
+- [ApiConfig.kt](src/main/kotlin/org/bothubclient/config/ApiConfig.kt) — URL и параметры API
 
-#### 2. Data Classes (BothubClient.kt)
+#### 2. Domain слой
 
-- `ChatMessage` — структура сообщения (role, content)
-- `ChatRequest` — структура запроса к API
-- `ChatResponse` — структура ответа от API
-- `SystemPrompt` — системный промт с именем и содержимым
+Сущности:
 
-#### 3. API Functions (BothubClient.kt)
+- `Message` — сообщение с role, content, timestamp
+- `ChatRequest` — параметры запроса
+- `ChatResult` — sealed class (Success/Error)
 
-- `createHttpClient()` — создание HTTP клиента с JSON сериализацией
-- `sendMessage()` — отправка сообщения в Bothub API с параметрами модели и системного промта
-- `getApiKey()` — получение API ключа из переменной окружения
+Интерфейсы:
 
-#### 4. GUI Components (BothubGui.kt)
+- `ChatRepository` — контракт для отправки сообщений
+- `ApiKeyProvider` — контракт для получения API ключа
 
-- `BothubChatApp` — главный компонент приложения
-- `ChatMessageItem` — модель сообщения для отображения
-- Dropdown меню для выбора модели и системного промта
-- Карта с отображением полного текста выбранного промта
-- Список сообщений с аватарами и временными метками
+#### 3. Application слой
+
+Use-cases (инкапсулируют бизнес-логику):
+
+- `SendMessageUseCase` — отправка сообщения через репозиторий
+- `GetAvailableModelsUseCase` — получение списка моделей
+- `GetSystemPromptsUseCase` — получение списка промптов
+- `ValidateApiKeyUseCase` — валидация API ключа
+
+#### 4. Infrastructure слой
+
+Реализации:
+
+- `BothubChatRepository` — HTTP клиент для Bothub API
+- `EnvironmentApiKeyProvider` — чтение ключа из переменных окружения
+- `ServiceLocator` — DI контейнер для управления зависимостями
+
+#### 5. Presentation слой
+
+- `ChatViewModel` — управление состоянием UI (messages, isLoading, errors)
+- `ChatScreen` — главный экран с чатом
+- Компоненты: MessageBubble, DropdownSelector, ChatInputField, SendButton, ErrorCard
 
 ## Цели проекта
 
 1. Предоставить удобный GUI для работы с различными LLM через единый API
 2. Обеспечить гибкую настройку через выбор моделей и системных промтов
 3. Поддерживать историю чата в рамках сессии
-4. Демонстрировать интеграцию Kotlin/Compose с OpenAI-совместимым API
+4. Демонстрировать Clean Architecture на Kotlin/Compose
 
 ## Поставщик LLM: BOTHUB
 
-本项目 использует **BOTHUB** в качестве поставщика LLM. BOTHUB предоставляет единый API, совместимый с OpenAI, для
+Проект использует **BOTHUB** в качестве поставщика LLM. BOTHUB предоставляет единый API, совместимый с OpenAI, для
 доступа к различным языковым моделям.
 
 ### Получение API ключа
@@ -83,6 +160,7 @@ AdventChallenge/
 
 | Модель                                             | Описание                |
 |----------------------------------------------------|-------------------------|
+| gemini-2.0-flash-lite-001                          | Модель Google Gemini    |
 | grok-4.1-fast, grok-3                              | Модели xAI Grok         |
 | gpt-4.1, gpt-4.1-mini, gpt-4o, gpt-4o-mini         | Модели OpenAI GPT       |
 | o3, o3-mini, o4-mini                               | Модели OpenAI O-серии   |
@@ -142,8 +220,41 @@ Bothub использует OpenAI-совместимый формат:
 }
 ```
 
+## Зависимости между слоями
+
+```
+Presentation → Application → Domain
+     ↓              ↓
+Infrastructure ← ServiceLocator
+```
+
+- Presentation зависит от Application (use-cases)
+- Application зависит от Domain (interfaces)
+- Infrastructure реализует Domain interfaces
+- ServiceLocator связывает все слои
+
+## Расширение проекта
+
+### Добавление новой модели
+
+Отредактировать [AvailableModels.kt](src/main/kotlin/org/bothubclient/config/AvailableModels.kt)
+
+### Добавление нового системного промпта
+
+Отредактировать [SystemPrompts.kt](src/main/kotlin/org/bothubclient/config/SystemPrompts.kt)
+
+### Добавление нового use-case
+
+1. Создать класс в `application/usecase/`
+2. Зарегистрировать в `ServiceLocator`
+
+### Добавление нового API провайдера
+
+1. Реализовать `ChatRepository` interface
+2. Добавить в `ServiceLocator`
+
 ## Ограничения
 
 - API ключ должен быть установлен в переменной окружения `BOTHUB_API_KEY`
-- Выбор системного промта доступен только в начале разговора (при пустом чате)
+- Выбор системного промпта доступен только в начале разговора (при пустом чате)
 - История чата хранится только в памяти (не сохраняется между сессиями)

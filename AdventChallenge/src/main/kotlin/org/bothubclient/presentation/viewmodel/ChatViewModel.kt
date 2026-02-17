@@ -59,6 +59,14 @@ class ChatViewModel(
         }
     }
 
+    fun resetSession() {
+        messages = emptyList()
+        inputText = ""
+        statusMessage = "Готов к работе"
+        apiKeyError = null
+        selectedPrompt = getSystemPromptsUseCase.getDefault()
+    }
+
     fun sendMessage(scope: CoroutineScope) {
         if (inputText.isBlank() || isLoading) return
 

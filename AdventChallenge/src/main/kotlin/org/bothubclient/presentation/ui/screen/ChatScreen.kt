@@ -43,7 +43,11 @@ fun ChatScreen(
                 .background(MaterialTheme.colors.background)
                 .padding(16.dp)
         ) {
-            Header(title = "Bothub Chat Client")
+            Header(
+                title = "Bothub Chat Client",
+                showReset = viewModel.messages.isNotEmpty(),
+                onReset = { viewModel.resetSession() }
+            )
 
             DropdownSelector(
                 label = "Model",
@@ -104,14 +108,31 @@ fun ChatScreen(
 }
 
 @Composable
-private fun Header(title: String) {
-    Text(
-        text = title,
-        fontSize = 24.sp,
-        fontWeight = FontWeight.Bold,
-        color = MaterialTheme.colors.primary,
-        modifier = Modifier.padding(bottom = 8.dp)
-    )
+private fun Header(
+    title: String,
+    showReset: Boolean = false,
+    onReset: () -> Unit = {}
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = title,
+            fontSize = 24.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colors.primary
+        )
+        if (showReset) {
+            ResetButton(
+                enabled = true,
+                onClick = onReset
+            )
+        }
+    }
 }
 
 @Composable
