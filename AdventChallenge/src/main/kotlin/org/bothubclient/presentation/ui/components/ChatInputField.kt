@@ -1,5 +1,6 @@
 package org.bothubclient.presentation.ui.components
 
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.OutlinedTextField
@@ -25,6 +26,31 @@ fun ChatInputField(
         enabled = enabled,
         singleLine = false,
         maxLines = 3,
+        colors = TextFieldDefaults.outlinedTextFieldColors(
+            textColor = Color.White,
+            backgroundColor = MaterialTheme.colors.surface,
+            focusedBorderColor = MaterialTheme.colors.primary,
+            unfocusedBorderColor = Color.Gray
+        ),
+        shape = RoundedCornerShape(12.dp)
+    )
+}
+
+@Composable
+fun CustomPromptInputField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    enabled: Boolean,
+    modifier: Modifier = Modifier
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        modifier = modifier.heightIn(min = 80.dp, max = 200.dp),
+        placeholder = { Text("Введите ваш системный промпт...", color = Color.Gray) },
+        enabled = enabled,
+        singleLine = false,
+        maxLines = 8,
         colors = TextFieldDefaults.outlinedTextFieldColors(
             textColor = Color.White,
             backgroundColor = MaterialTheme.colors.surface,

@@ -2,11 +2,19 @@ package org.bothubclient.config
 
 data class SystemPrompt(
     val name: String,
-    val text: String
+    val text: String,
+    val isCustom: Boolean = false
 )
 
 object SystemPrompts {
+    val CUSTOM_PROMPT = SystemPrompt(
+        name = "Свой промпт",
+        text = "",
+        isCustom = true
+    )
+
     val ALL: List<SystemPrompt> = listOf(
+        CUSTOM_PROMPT,
         SystemPrompt(
             name = "Анализ плюсов и минусов Light",
             text = """ Ты аналитик, обсуждающий предметы путём взвешивания плюсов и минусов

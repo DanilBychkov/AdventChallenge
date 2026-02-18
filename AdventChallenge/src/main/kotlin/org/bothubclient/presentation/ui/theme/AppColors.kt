@@ -9,4 +9,5 @@ object AppColors {
     val Surface = Color(0xFF2D2D3D)
     val Error = Color(0xFFFF6B6B)
     val ErrorCard = Color(0xFFB71C1C)
+    val ResizerColor = Color(0xFF4A4A5A)
 }

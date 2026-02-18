@@ -5,10 +5,7 @@ import io.ktor.client.engine.okhttp.*
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.serialization.kotlinx.json.*
 import kotlinx.serialization.json.Json
-import org.bothubclient.application.usecase.GetAvailableModelsUseCase
-import org.bothubclient.application.usecase.GetSystemPromptsUseCase
-import org.bothubclient.application.usecase.SendMessageUseCase
-import org.bothubclient.application.usecase.ValidateApiKeyUseCase
+import org.bothubclient.application.usecase.*
 import org.bothubclient.domain.repository.ApiKeyProvider
 import org.bothubclient.domain.repository.ChatRepository
 import org.bothubclient.infrastructure.api.BothubChatRepository
@@ -48,6 +45,10 @@ object ServiceLocator {
 
     val validateApiKeyUseCase: ValidateApiKeyUseCase by lazy {
         ValidateApiKeyUseCase(apiKeyProvider)
+    }
+
+    val optimizePromptUseCase: OptimizePromptUseCase by lazy {
+        OptimizePromptUseCase(chatRepository)
     }
 
     fun close() {

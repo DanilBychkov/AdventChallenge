@@ -1,6 +1,7 @@
 package org.bothubclient.presentation.viewmodel
 
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CoroutineScope
@@ -12,15 +13,15 @@ import org.bothubclient.config.SystemPrompt
 import org.bothubclient.domain.entity.ChatResult
 import org.bothubclient.domain.entity.Message
 
-class ChatViewModel(
+class ChatPanelViewModel(
     private val sendMessageUseCase: SendMessageUseCase,
     private val getAvailableModelsUseCase: GetAvailableModelsUseCase,
     private val getSystemPromptsUseCase: GetSystemPromptsUseCase,
     private val validateApiKeyUseCase: ValidateApiKeyUseCase,
     private val optimizePromptUseCase: OptimizePromptUseCase
 ) {
-    var messages by mutableStateOf<List<Message>>(emptyList())
-        private set
+    private val _messages = mutableStateListOf<Message>()
+    val messages: List<Message> get() = _messages.toList()
 
     var inputText by mutableStateOf("")
         private set
@@ -28,10 +29,7 @@ class ChatViewModel(
     var isLoading by mutableStateOf(false)
         private set
 
-    var statusMessage by mutableStateOf("Готов к работе")
-        private set
-
-    var apiKeyError by mutableStateOf<String?>(null)
+    var statusMessage by mutableStateOf("Готов")
         private set
 
     var selectedModel by mutableStateOf(getAvailableModelsUseCase.getDefault())
@@ -49,16 +47,11 @@ class ChatViewModel(
     var isOptimizingPrompt by mutableStateOf(false)
         private set
 
-    var optimizePromptError by mutableStateOf<String?>(null)
-        private set
-
     val effectivePromptText: String
-        get() {
-            return if (selectedPrompt.isCustom) {
-                optimizedPromptText ?: customPromptText
-            } else {
-                selectedPrompt.text
-            }
+        get() = if (selectedPrompt.isCustom) {
+            optimizedPromptText ?: customPromptText
+        } else {
+            selectedPrompt.text
         }
 
     val hasOptimizedPrompt: Boolean
@@ -76,7 +69,7 @@ class ChatViewModel(
     }
 
     fun onPromptSelected(prompt: SystemPrompt) {
-        if (messages.isEmpty() && !isLoading) {
+        if (_messages.isEmpty() && !isLoading) {
             selectedPrompt = prompt
         }
     }
@@ -84,25 +77,15 @@ class ChatViewModel(
     fun onCustomPromptTextChanged(text: String) {
         customPromptText = text
         optimizedPromptText = null
-        optimizePromptError = null
     }
 
     fun optimizeCustomPrompt(scope: CoroutineScope) {
         if (customPromptText.isBlank() || isOptimizingPrompt) return
 
         isOptimizingPrompt = true
-        optimizePromptError = null
-        statusMessage = "Оптимизация промпта..."
+        statusMessage = "Оптимизация..."
 
         scope.launch {
-            val validationResult = validateApiKeyUseCase()
-            if (validationResult.isFailure) {
-                apiKeyError = validationResult.exceptionOrNull()?.message
-                statusMessage = "Ошибка конфигурации"
-                isOptimizingPrompt = false
-                return@launch
-            }
-
             val result = withContext(Dispatchers.IO) {
                 optimizePromptUseCase(customPromptText, selectedModel)
             }
@@ -110,12 +93,11 @@ class ChatViewModel(
             when (result) {
                 is OptimizePromptResult.Success -> {
                     optimizedPromptText = result.optimizedPrompt
-                    statusMessage = "Промпт оптимизирован"
+                    statusMessage = "Оптимизирован"
                 }
 
                 is OptimizePromptResult.Error -> {
-                    optimizePromptError = result.message
-                    statusMessage = "Ошибка оптимизации"
+                    statusMessage = "Ошибка"
                 }
             }
             isOptimizingPrompt = false
@@ -124,18 +106,16 @@ class ChatViewModel(
 
     fun useOriginalPrompt() {
         optimizedPromptText = null
-        statusMessage = "Используется оригинальный промпт"
+        statusMessage = "Готов"
     }
 
     fun resetSession() {
-        messages = emptyList()
+        _messages.clear()
         inputText = ""
-        statusMessage = "Готов к работе"
-        apiKeyError = null
+        statusMessage = "Готов"
         selectedPrompt = getSystemPromptsUseCase.getDefault()
         customPromptText = ""
         optimizedPromptText = null
-        optimizePromptError = null
     }
 
     fun sendMessage(scope: CoroutineScope) {
@@ -143,16 +123,14 @@ class ChatViewModel(
 
         val userMessage = inputText.trim()
         inputText = ""
-        messages = messages + Message.user(userMessage)
+        _messages.add(Message.user(userMessage))
         isLoading = true
-        statusMessage = "Отправка запроса..."
-        apiKeyError = null
+        statusMessage = "Отправка..."
 
         scope.launch {
             val validationResult = validateApiKeyUseCase()
             if (validationResult.isFailure) {
-                apiKeyError = validationResult.exceptionOrNull()?.message
-                statusMessage = "Ошибка конфигурации"
+                statusMessage = "Ошибка API"
                 isLoading = false
                 return@launch
             }
@@ -163,13 +141,13 @@ class ChatViewModel(
 
             when (result) {
                 is ChatResult.Success -> {
-                    messages = messages + result.message
-                    statusMessage = "Готов к работе"
+                    _messages.add(result.message)
+                    statusMessage = "Готов"
                 }
 
                 is ChatResult.Error -> {
-                    messages = messages + Message.error("Ошибка: ${result.exception.message}")
-                    statusMessage = "Ошибка запроса"
+                    _messages.add(Message.error("Ошибка: ${result.exception.message}"))
+                    statusMessage = "Ошибка"
                 }
             }
             isLoading = false
@@ -177,8 +155,8 @@ class ChatViewModel(
     }
 
     companion object {
-        fun create(): ChatViewModel {
-            return ChatViewModel(
+        fun create(): ChatPanelViewModel {
+            return ChatPanelViewModel(
                 sendMessageUseCase = org.bothubclient.infrastructure.di.ServiceLocator.sendMessageUseCase,
                 getAvailableModelsUseCase = org.bothubclient.infrastructure.di.ServiceLocator.getAvailableModelsUseCase,
                 getSystemPromptsUseCase = org.bothubclient.infrastructure.di.ServiceLocator.getSystemPromptsUseCase,
