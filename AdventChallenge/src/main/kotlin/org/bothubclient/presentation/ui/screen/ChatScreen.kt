@@ -14,7 +14,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -36,11 +35,9 @@ fun ChatScreen(
     val promptScrollState = rememberScrollState()
 
     var promptPanelHeight by remember { mutableStateOf(PanelSizePreferences.promptPanelHeight.dp) }
-    var availableHeight by remember { mutableStateOf(0) }
 
     val minPromptHeight = 120.dp
     val maxPromptHeight = 400.dp
-    val minMessagesHeight = 200.dp
 
     LaunchedEffect(viewModel.messages.size) {
         scrollState.scrollTo(scrollState.maxValue)
@@ -52,9 +49,6 @@ fun ChatScreen(
                 .fillMaxSize()
                 .background(MaterialTheme.colors.background)
                 .padding(16.dp)
-                .onSizeChanged { size ->
-                    availableHeight = size.height
-                }
         ) {
             Header(
                 title = "Bothub Chat Client",
@@ -71,6 +65,35 @@ fun ChatScreen(
                 expanded = modelDropdownExpanded,
                 onExpandedChange = { modelDropdownExpanded = it }
             )
+
+            if (viewModel.messages.isEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = viewModel.temperatureText,
+                    onValueChange = { viewModel.onTemperatureTextChanged(it) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Температура") },
+                    placeholder = { Text("0.7", color = Color.Gray) },
+                    enabled = !viewModel.isLoading,
+                    singleLine = true,
+                    colors = TextFieldDefaults.outlinedTextFieldColors(
+                        textColor = Color.White,
+                        backgroundColor = MaterialTheme.colors.surface,
+                        focusedBorderColor = MaterialTheme.colors.primary,
+                        unfocusedBorderColor = Color.Gray
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    isError = viewModel.temperatureError != null
+                )
+                viewModel.temperatureError?.let { error ->
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = error,
+                        fontSize = 12.sp,
+                        color = Color(0xFFFF6B6B)
+                    )
+                }
+            }
 
             val canChangePrompt = viewModel.messages.isEmpty() && !viewModel.isLoading
 
@@ -124,8 +147,7 @@ fun ChatScreen(
                 scrollState = scrollState,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f, fill = false)
-                    .heightIn(min = minMessagesHeight)
+                    .weight(1f)
             )
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -134,6 +156,7 @@ fun ChatScreen(
                 inputText = viewModel.inputText,
                 onInputTextChanged = { viewModel.onInputTextChanged(it) },
                 isLoading = viewModel.isLoading,
+                isLocked = viewModel.isInputLocked,
                 onSendClick = { viewModel.sendMessage(coroutineScope) }
             )
 
@@ -261,6 +284,7 @@ private fun InputRow(
     inputText: String,
     onInputTextChanged: (String) -> Unit,
     isLoading: Boolean,
+    isLocked: Boolean,
     onSendClick: () -> Unit
 ) {
     Row(
@@ -271,12 +295,12 @@ private fun InputRow(
         ChatInputField(
             value = inputText,
             onValueChange = onInputTextChanged,
-            enabled = !isLoading,
+            enabled = !isLoading && !isLocked,
             modifier = Modifier.weight(1f)
         )
 
         SendButton(
-            enabled = inputText.isNotBlank() && !isLoading,
+            enabled = inputText.isNotBlank() && !isLoading && !isLocked,
             isLoading = isLoading,
             onClick = onSendClick
         )

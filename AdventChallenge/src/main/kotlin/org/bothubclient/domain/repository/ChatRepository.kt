@@ -6,6 +6,7 @@ interface ChatRepository {
     suspend fun sendMessage(
         userMessage: String,
         model: String,
-        systemPrompt: String
+        systemPrompt: String,
+        temperature: Double = 0.7
     ): ChatResult
 }

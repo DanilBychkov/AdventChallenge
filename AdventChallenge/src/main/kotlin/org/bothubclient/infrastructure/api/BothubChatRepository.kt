@@ -3,6 +3,7 @@ package org.bothubclient.infrastructure.api
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.engine.okhttp.*
+import io.ktor.client.plugins.*
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
@@ -13,6 +14,7 @@ import org.bothubclient.config.ApiConfig
 import org.bothubclient.domain.entity.ChatResult
 import org.bothubclient.domain.entity.Message
 import org.bothubclient.domain.repository.ChatRepository
+import java.util.concurrent.TimeUnit
 
 class BothubChatRepository(
     private val client: HttpClient,
@@ -22,7 +24,8 @@ class BothubChatRepository(
     override suspend fun sendMessage(
         userMessage: String,
         model: String,
-        systemPrompt: String
+        systemPrompt: String,
+        temperature: Double
     ): ChatResult {
         return try {
             val apiKey = getApiKey()
@@ -33,7 +36,7 @@ class BothubChatRepository(
                     ApiChatMessage(role = "user", content = userMessage)
                 ),
                 max_tokens = ApiConfig.DEFAULT_MAX_TOKENS,
-                temperature = ApiConfig.DEFAULT_TEMPERATURE
+                temperature = temperature
             )
 
             val response: HttpResponse = client.post(ApiConfig.BASE_URL) {
@@ -75,6 +78,19 @@ class BothubChatRepository(
     companion object {
         fun createDefault(getApiKey: () -> String): BothubChatRepository {
             val client = HttpClient(OkHttp) {
+                engine {
+                    config {
+                        callTimeout(120, TimeUnit.SECONDS)
+                        connectTimeout(30, TimeUnit.SECONDS)
+                        readTimeout(120, TimeUnit.SECONDS)
+                        writeTimeout(120, TimeUnit.SECONDS)
+                    }
+                }
+                install(HttpTimeout) {
+                    requestTimeoutMillis = 120_000
+                    connectTimeoutMillis = 30_000
+                    socketTimeoutMillis = 120_000
+                }
                 install(ContentNegotiation) {
                     json(Json {
                         ignoreUnknownKeys = true

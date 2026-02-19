@@ -11,6 +11,8 @@ import org.bothubclient.application.usecase.*
 import org.bothubclient.config.SystemPrompt
 import org.bothubclient.domain.entity.ChatResult
 import org.bothubclient.domain.entity.Message
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 class ChatViewModel(
     private val sendMessageUseCase: SendMessageUseCase,
@@ -52,6 +54,15 @@ class ChatViewModel(
     var optimizePromptError by mutableStateOf<String?>(null)
         private set
 
+    var isInputLocked by mutableStateOf(false)
+        private set
+
+    var temperatureText by mutableStateOf("0.7")
+        private set
+
+    var temperatureError by mutableStateOf<String?>(null)
+        private set
+
     val effectivePromptText: String
         get() {
             return if (selectedPrompt.isCustom) {
@@ -67,7 +78,28 @@ class ChatViewModel(
     val availableModels: List<String> get() = getAvailableModelsUseCase()
     val availablePrompts: List<SystemPrompt> get() = getSystemPromptsUseCase()
 
+    private fun parseTemperatureOrNull(text: String): Double? {
+        val normalized = text.trim().replace(',', '.')
+        val value = normalized.toDoubleOrNull() ?: return null
+        if (value < 0.0 || value > 2.0) return null
+        val scaled = value * 10.0
+        val roundedScaled = scaled.roundToInt().toDouble()
+        if (abs(scaled - roundedScaled) > 1e-6) return null
+        return roundedScaled / 10.0
+    }
+
+    fun onTemperatureTextChanged(text: String) {
+        if (messages.isNotEmpty()) return
+        temperatureText = text
+        temperatureError = if (parseTemperatureOrNull(text) == null) {
+            "Введите число от 0 до 2 с шагом 0.1"
+        } else {
+            null
+        }
+    }
+
     fun onInputTextChanged(text: String) {
+        if (isInputLocked) return
         inputText = text
     }
 
@@ -136,14 +168,26 @@ class ChatViewModel(
         customPromptText = ""
         optimizedPromptText = null
         optimizePromptError = null
+        isInputLocked = false
+        temperatureText = "0.7"
+        temperatureError = null
     }
 
     fun sendMessage(scope: CoroutineScope) {
-        if (inputText.isBlank() || isLoading) return
+        if (inputText.isBlank() || isLoading || isInputLocked) return
+
+        val temperature = parseTemperatureOrNull(temperatureText)
+        if (temperature == null) {
+            temperatureError = "Введите число от 0 до 2 с шагом 0.1"
+            statusMessage = "Ошибка температуры"
+            return
+        }
+        temperatureError = null
 
         val userMessage = inputText.trim()
-        inputText = ""
+        inputText = userMessage
         messages = messages + Message.user(userMessage)
+        isInputLocked = true
         isLoading = true
         statusMessage = "Отправка запроса..."
         apiKeyError = null
@@ -158,7 +202,7 @@ class ChatViewModel(
             }
 
             val result = withContext(Dispatchers.IO) {
-                sendMessageUseCase(userMessage, selectedModel, effectivePromptText)
+                sendMessageUseCase(userMessage, selectedModel, effectivePromptText, temperature)
             }
 
             when (result) {

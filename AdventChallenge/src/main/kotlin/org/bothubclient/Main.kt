@@ -6,15 +6,17 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import org.bothubclient.infrastructure.di.ServiceLocator
-import org.bothubclient.presentation.ui.screen.MultiChatScreen
+import org.bothubclient.presentation.ui.screen.ChatScreen
+import org.bothubclient.presentation.viewmodel.ChatViewModel
 
 fun main() = application {
     val windowState = rememberWindowState(
-        width = 1200.dp,
-        height = 800.dp
+        width = 900.dp,
+        height = 700.dp
     )
 
     val coroutineScope = rememberCoroutineScope()
+    val viewModel = ChatViewModel.create()
 
     Window(
         onCloseRequest = {
@@ -22,9 +24,10 @@ fun main() = application {
             exitApplication()
         },
         state = windowState,
-        title = "Bothub Multi-Chat Client"
+        title = "Bothub Chat Client"
     ) {
-        MultiChatScreen(
+        ChatScreen(
+            viewModel = viewModel,
             coroutineScope = coroutineScope
         )
     }

@@ -9,8 +9,9 @@ class SendMessageUseCase(
     suspend operator fun invoke(
         userMessage: String,
         model: String,
-        systemPrompt: String
+        systemPrompt: String,
+        temperature: Double
     ): ChatResult {
-        return chatRepository.sendMessage(userMessage, model, systemPrompt)
+        return chatRepository.sendMessage(userMessage, model, systemPrompt, temperature)
     }
 }
