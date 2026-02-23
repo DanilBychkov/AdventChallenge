@@ -25,10 +25,7 @@ import org.bothubclient.presentation.ui.theme.BothubTheme
 import org.bothubclient.presentation.viewmodel.ChatViewModel
 
 @Composable
-fun ChatScreen(
-    viewModel: ChatViewModel,
-    coroutineScope: CoroutineScope
-) {
+fun ChatScreen(viewModel: ChatViewModel, coroutineScope: CoroutineScope) {
     var modelDropdownExpanded by remember { mutableStateOf(false) }
     var promptDropdownExpanded by remember { mutableStateOf(false) }
     val scrollState = rememberScrollState()
@@ -39,16 +36,14 @@ fun ChatScreen(
     val minPromptHeight = 120.dp
     val maxPromptHeight = 400.dp
 
-    LaunchedEffect(viewModel.messages.size) {
-        scrollState.scrollTo(scrollState.maxValue)
-    }
+    LaunchedEffect(viewModel.messages.size) { scrollState.scrollTo(scrollState.maxValue) }
 
     BothubTheme {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(MaterialTheme.colors.background)
-                .padding(16.dp)
+            modifier =
+                Modifier.fillMaxSize()
+                    .background(MaterialTheme.colors.background)
+                    .padding(16.dp)
         ) {
             Header(
                 title = "Bothub Chat Client",
@@ -76,22 +71,19 @@ fun ChatScreen(
                     placeholder = { Text("0.7", color = Color.Gray) },
                     enabled = !viewModel.isLoading,
                     singleLine = true,
-                    colors = TextFieldDefaults.outlinedTextFieldColors(
-                        textColor = Color.White,
-                        backgroundColor = MaterialTheme.colors.surface,
-                        focusedBorderColor = MaterialTheme.colors.primary,
-                        unfocusedBorderColor = Color.Gray
-                    ),
+                    colors =
+                        TextFieldDefaults.outlinedTextFieldColors(
+                            textColor = Color.White,
+                            backgroundColor = MaterialTheme.colors.surface,
+                            focusedBorderColor = MaterialTheme.colors.primary,
+                            unfocusedBorderColor = Color.Gray
+                        ),
                     shape = RoundedCornerShape(12.dp),
                     isError = viewModel.temperatureError != null
                 )
                 viewModel.temperatureError?.let { error ->
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = error,
-                        fontSize = 12.sp,
-                        color = Color(0xFFFF6B6B)
-                    )
+                    Text(text = error, fontSize = 12.sp, color = Color(0xFFFF6B6B))
                 }
             }
 
@@ -145,9 +137,7 @@ fun ChatScreen(
             MessagesContainer(
                 messages = viewModel.messages,
                 scrollState = scrollState,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
+                modifier = Modifier.fillMaxWidth().weight(1f)
             )
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -156,7 +146,6 @@ fun ChatScreen(
                 inputText = viewModel.inputText,
                 onInputTextChanged = { viewModel.onInputTextChanged(it) },
                 isLoading = viewModel.isLoading,
-                isLocked = viewModel.isInputLocked,
                 onSendClick = { viewModel.sendMessage(coroutineScope) }
             )
 
@@ -171,15 +160,9 @@ fun ChatScreen(
 }
 
 @Composable
-private fun Header(
-    title: String,
-    showReset: Boolean = false,
-    onReset: () -> Unit = {}
-) {
+private fun Header(title: String, showReset: Boolean = false, onReset: () -> Unit = {}) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(bottom = 8.dp),
+        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -190,10 +173,7 @@ private fun Header(
             color = MaterialTheme.colors.primary
         )
         if (showReset) {
-            ResetButton(
-                enabled = true,
-                onClick = onReset
-            )
+            ResetButton(enabled = true, onClick = onReset)
         }
     }
 }
@@ -205,17 +185,11 @@ private fun SystemPromptCard(
     modifier: Modifier = Modifier
 ) {
     Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(bottom = 8.dp),
+        modifier = modifier.fillMaxWidth().padding(bottom = 8.dp),
         backgroundColor = MaterialTheme.colors.surface,
         shape = RoundedCornerShape(12.dp)
     ) {
-        Column(
-            modifier = Modifier
-                .padding(12.dp)
-                .verticalScroll(scrollState)
-        ) {
+        Column(modifier = Modifier.padding(12.dp).verticalScroll(scrollState)) {
             Text(
                 text = "Текст системного промта:",
                 fontSize = 11.sp,
@@ -223,11 +197,7 @@ private fun SystemPromptCard(
                 fontWeight = FontWeight.Medium
             )
             Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = prompt,
-                fontSize = 12.sp,
-                color = Color.White
-            )
+            Text(text = prompt, fontSize = 12.sp, color = Color.White)
         }
     }
 }
@@ -243,16 +213,10 @@ private fun MessagesContainer(
         backgroundColor = MaterialTheme.colors.surface,
         shape = RoundedCornerShape(12.dp)
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(8.dp)
-        ) {
+        Column(modifier = Modifier.fillMaxSize().padding(8.dp)) {
             if (messages.isEmpty()) {
                 Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth(),
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -263,17 +227,13 @@ private fun MessagesContainer(
                 }
             } else {
                 Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .verticalScroll(scrollState)
-                        .padding(4.dp),
+                    modifier =
+                        Modifier.weight(1f)
+                            .fillMaxWidth()
+                            .verticalScroll(scrollState)
+                            .padding(4.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    messages.forEach { message ->
-                        MessageBubble(message)
-                    }
-                }
+                ) { messages.forEach { message -> MessageBubble(message) } }
             }
         }
     }
@@ -284,7 +244,6 @@ private fun InputRow(
     inputText: String,
     onInputTextChanged: (String) -> Unit,
     isLoading: Boolean,
-    isLocked: Boolean,
     onSendClick: () -> Unit
 ) {
     Row(
@@ -295,12 +254,14 @@ private fun InputRow(
         ChatInputField(
             value = inputText,
             onValueChange = onInputTextChanged,
-            enabled = !isLoading && !isLocked,
+            // UX: можно печатать следующее сообщение, пока запрос выполняется
+            enabled = true,
             modifier = Modifier.weight(1f)
         )
 
         SendButton(
-            enabled = inputText.isNotBlank() && !isLoading && !isLocked,
+            // Отправку блокируем на время выполнения запроса, чтобы избежать дублей
+            enabled = inputText.isNotBlank() && !isLoading,
             isLoading = isLoading,
             onClick = onSendClick
         )
@@ -308,15 +269,8 @@ private fun InputRow(
 }
 
 @Composable
-private fun StatusText(
-    message: String,
-    isError: Boolean
-) {
-    Text(
-        text = message,
-        fontSize = 12.sp,
-        color = if (isError) Color(0xFFFF6B6B) else Color.Gray
-    )
+private fun StatusText(message: String, isError: Boolean) {
+    Text(text = message, fontSize = 12.sp, color = if (isError) Color(0xFFFF6B6B) else Color.Gray)
 }
 
 @Composable
@@ -333,31 +287,25 @@ private fun CustomPromptInputSection(
     modifier: Modifier = Modifier
 ) {
     Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(bottom = 8.dp),
+        modifier = modifier.fillMaxWidth().padding(bottom = 8.dp),
         backgroundColor = MaterialTheme.colors.surface,
         shape = RoundedCornerShape(12.dp)
     ) {
-        Column(
-            modifier = Modifier
-                .padding(12.dp)
-                .verticalScroll(rememberScrollState())
-        ) {
+        Column(modifier = Modifier.padding(12.dp).verticalScroll(rememberScrollState())) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = if (hasOptimizedPrompt) "Оптимизированный промпт:" else "Ваш системный промпт:",
+                    text =
+                        if (hasOptimizedPrompt) "Оптимизированный промпт:"
+                        else "Ваш системный промпт:",
                     fontSize = 11.sp,
                     color = Color.Gray,
                     fontWeight = FontWeight.Medium
                 )
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (hasOptimizedPrompt) {
                         TextButton(
                             onClick = onUseOriginalClick,
@@ -382,10 +330,11 @@ private fun CustomPromptInputSection(
                         onClick = onOptimizeClick,
                         enabled = enabled && customText.isNotBlank() && !isOptimizing,
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            backgroundColor = MaterialTheme.colors.primary,
-                            disabledBackgroundColor = Color.Gray.copy(alpha = 0.3f)
-                        ),
+                        colors =
+                            ButtonDefaults.buttonColors(
+                                backgroundColor = MaterialTheme.colors.primary,
+                                disabledBackgroundColor = Color.Gray.copy(alpha = 0.3f)
+                            ),
                         shape = RoundedCornerShape(8.dp)
                     ) {
                         if (isOptimizing) {
@@ -404,7 +353,9 @@ private fun CustomPromptInputSection(
                         }
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = if (isOptimizing) "Оптимизация..." else "Оптимизировать через LLM",
+                            text =
+                                if (isOptimizing) "Оптимизация..."
+                                else "Оптимизировать через LLM",
                             fontSize = 11.sp,
                             color = Color.White
                         )
@@ -415,11 +366,7 @@ private fun CustomPromptInputSection(
             Spacer(modifier = Modifier.height(8.dp))
 
             if (hasOptimizedPrompt) {
-                Text(
-                    text = optimizedPrompt ?: "",
-                    fontSize = 12.sp,
-                    color = Color.White
-                )
+                Text(text = optimizedPrompt ?: "", fontSize = 12.sp, color = Color.White)
             } else {
                 CustomPromptInputField(
                     value = customText,
@@ -431,11 +378,7 @@ private fun CustomPromptInputSection(
 
             optimizeError?.let { error ->
                 Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = error,
-                    fontSize = 11.sp,
-                    color = Color(0xFFFF6B6B)
-                )
+                Text(text = error, fontSize = 11.sp, color = Color(0xFFFF6B6B))
             }
         }
     }

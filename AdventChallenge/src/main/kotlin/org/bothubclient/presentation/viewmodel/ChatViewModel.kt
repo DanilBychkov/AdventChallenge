@@ -56,9 +56,6 @@ class ChatViewModel(
     var optimizePromptError by mutableStateOf<String?>(null)
         private set
 
-    var isInputLocked by mutableStateOf(false)
-        private set
-
     var temperatureText by mutableStateOf("0.7")
         private set
 
@@ -77,8 +74,10 @@ class ChatViewModel(
     val hasOptimizedPrompt: Boolean
         get() = selectedPrompt.isCustom && optimizedPromptText != null
 
-    val availableModels: List<String> get() = getAvailableModelsUseCase()
-    val availablePrompts: List<SystemPrompt> get() = getSystemPromptsUseCase()
+    val availableModels: List<String>
+        get() = getAvailableModelsUseCase()
+    val availablePrompts: List<SystemPrompt>
+        get() = getSystemPromptsUseCase()
 
     private fun parseTemperatureOrNull(text: String): Double? {
         val normalized = text.trim().replace(',', '.')
@@ -93,15 +92,15 @@ class ChatViewModel(
     fun onTemperatureTextChanged(text: String) {
         if (messages.isNotEmpty()) return
         temperatureText = text
-        temperatureError = if (parseTemperatureOrNull(text) == null) {
-            "Введите число от 0 до 2 с шагом 0.1"
-        } else {
-            null
-        }
+        temperatureError =
+            if (parseTemperatureOrNull(text) == null) {
+                "Введите число от 0 до 2 с шагом 0.1"
+            } else {
+                null
+            }
     }
 
     fun onInputTextChanged(text: String) {
-        if (isInputLocked) return
         inputText = text
     }
 
@@ -137,16 +136,16 @@ class ChatViewModel(
                 return@launch
             }
 
-            val result = withContext(Dispatchers.IO) {
-                optimizePromptUseCase(customPromptText, selectedModel)
-            }
+            val result =
+                withContext(Dispatchers.IO) {
+                    optimizePromptUseCase(customPromptText, selectedModel)
+                }
 
             when (result) {
                 is OptimizePromptResult.Success -> {
                     optimizedPromptText = result.optimizedPrompt
                     statusMessage = "Промпт оптимизирован"
                 }
-
                 is OptimizePromptResult.Error -> {
                     optimizePromptError = result.message
                     statusMessage = "Ошибка оптимизации"
@@ -170,13 +169,12 @@ class ChatViewModel(
         customPromptText = ""
         optimizedPromptText = null
         optimizePromptError = null
-        isInputLocked = false
         temperatureText = "0.7"
         temperatureError = null
     }
 
     fun sendMessage(scope: CoroutineScope) {
-        if (inputText.isBlank() || isLoading || isInputLocked) return
+        if (inputText.isBlank() || isLoading) return
 
         val temperature = parseTemperatureOrNull(temperatureText)
         if (temperature == null) {
@@ -187,9 +185,9 @@ class ChatViewModel(
         temperatureError = null
 
         val userMessage = inputText.trim()
-        inputText = userMessage
         messages = messages + Message.user(userMessage)
-        isInputLocked = true
+        // UX: разрешаем набирать следующее сообщение, пока текущий запрос в полёте
+        inputText = ""
         isLoading = true
         statusMessage = "Отправка запроса..."
         apiKeyError = null
@@ -203,32 +201,39 @@ class ChatViewModel(
                 return@launch
             }
 
-            val result = withContext(Dispatchers.IO) {
-                sendMessageUseCase(userMessage, selectedModel, effectivePromptText, temperature)
-            }
+            val result =
+                withContext(Dispatchers.IO) {
+                    sendMessageUseCase(
+                        userMessage,
+                        selectedModel,
+                        effectivePromptText,
+                        temperature
+                    )
+                }
 
             when (result) {
                 is ChatResult.Success -> {
                     val metrics = result.metrics
-                    val cost = ModelPricing.calculateCostRub(
-                        selectedModel,
-                        metrics.promptTokens,
-                        metrics.completionTokens
-                    )
-                    val messageWithMetrics = Message.assistant(
-                        result.message.content,
-                        MessageMetrics(
-                            promptTokens = metrics.promptTokens,
-                            completionTokens = metrics.completionTokens,
-                            totalTokens = metrics.totalTokens,
-                            responseTimeMs = metrics.responseTimeMs,
-                            cost = cost
+                    val cost =
+                        ModelPricing.calculateCostRub(
+                            selectedModel,
+                            metrics.promptTokens,
+                            metrics.completionTokens
                         )
-                    )
+                    val messageWithMetrics =
+                        Message.assistant(
+                            result.message.content,
+                            MessageMetrics(
+                                promptTokens = metrics.promptTokens,
+                                completionTokens = metrics.completionTokens,
+                                totalTokens = metrics.totalTokens,
+                                responseTimeMs = metrics.responseTimeMs,
+                                cost = cost
+                            )
+                        )
                     messages = messages + messageWithMetrics
                     statusMessage = "Готов к работе"
                 }
-
                 is ChatResult.Error -> {
                     messages = messages + Message.error("Ошибка: ${result.exception.message}")
                     statusMessage = "Ошибка запроса"
@@ -241,11 +246,18 @@ class ChatViewModel(
     companion object {
         fun create(): ChatViewModel {
             return ChatViewModel(
-                sendMessageUseCase = org.bothubclient.infrastructure.di.ServiceLocator.sendMessageUseCase,
-                getAvailableModelsUseCase = org.bothubclient.infrastructure.di.ServiceLocator.getAvailableModelsUseCase,
-                getSystemPromptsUseCase = org.bothubclient.infrastructure.di.ServiceLocator.getSystemPromptsUseCase,
-                validateApiKeyUseCase = org.bothubclient.infrastructure.di.ServiceLocator.validateApiKeyUseCase,
-                optimizePromptUseCase = org.bothubclient.infrastructure.di.ServiceLocator.optimizePromptUseCase
+                sendMessageUseCase =
+                    org.bothubclient.infrastructure.di.ServiceLocator.sendMessageUseCase,
+                getAvailableModelsUseCase =
+                    org.bothubclient.infrastructure.di.ServiceLocator
+                        .getAvailableModelsUseCase,
+                getSystemPromptsUseCase =
+                    org.bothubclient.infrastructure.di.ServiceLocator
+                        .getSystemPromptsUseCase,
+                validateApiKeyUseCase =
+                    org.bothubclient.infrastructure.di.ServiceLocator.validateApiKeyUseCase,
+                optimizePromptUseCase =
+                    org.bothubclient.infrastructure.di.ServiceLocator.optimizePromptUseCase
             )
         }
     }

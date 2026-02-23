@@ -9,4 +9,6 @@ interface ChatRepository {
         systemPrompt: String,
         temperature: Double = 0.7
     ): ChatResult
+
+    fun resetSession() {}
 }
