@@ -3,7 +3,9 @@ package org.bothubclient.config
 object AvailableModels {
     val ALL: List<String> = listOf(
         "gemini-2.0-flash-lite-001",
+        "gpt-5.2",
         "grok-4.1-fast",
+        "gemma-2-9b-it",
         "grok-3",
         "gpt-4.1",
         "gpt-4.1-mini",

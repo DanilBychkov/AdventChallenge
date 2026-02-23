@@ -40,7 +40,8 @@ fun ChatInputField(
         onValueChange = onValueChange,
         modifier = modifier.alpha(fieldAlpha),
         placeholder = { Text("Введите сообщение...", color = Color.Gray) },
-        enabled = enabled,
+        enabled = true,
+        readOnly = !enabled,
         singleLine = false,
         maxLines = 3,
         colors = TextFieldDefaults.outlinedTextFieldColors(
@@ -67,7 +68,8 @@ fun CustomPromptInputField(
         onValueChange = onValueChange,
         modifier = modifier.heightIn(min = 80.dp, max = 200.dp),
         placeholder = { Text("Введите ваш системный промпт...", color = Color.Gray) },
-        enabled = enabled,
+        enabled = true,
+        readOnly = !enabled,
         singleLine = false,
         maxLines = 8,
         colors = TextFieldDefaults.outlinedTextFieldColors(

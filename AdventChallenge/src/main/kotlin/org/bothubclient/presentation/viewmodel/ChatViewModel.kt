@@ -8,9 +8,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.bothubclient.application.usecase.*
+import org.bothubclient.config.ModelPricing
 import org.bothubclient.config.SystemPrompt
 import org.bothubclient.domain.entity.ChatResult
 import org.bothubclient.domain.entity.Message
+import org.bothubclient.domain.entity.MessageMetrics
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -207,7 +209,23 @@ class ChatViewModel(
 
             when (result) {
                 is ChatResult.Success -> {
-                    messages = messages + result.message
+                    val metrics = result.metrics
+                    val cost = ModelPricing.calculateCostRub(
+                        selectedModel,
+                        metrics.promptTokens,
+                        metrics.completionTokens
+                    )
+                    val messageWithMetrics = Message.assistant(
+                        result.message.content,
+                        MessageMetrics(
+                            promptTokens = metrics.promptTokens,
+                            completionTokens = metrics.completionTokens,
+                            totalTokens = metrics.totalTokens,
+                            responseTimeMs = metrics.responseTimeMs,
+                            cost = cost
+                        )
+                    )
+                    messages = messages + messageWithMetrics
                     statusMessage = "Готов к работе"
                 }
 

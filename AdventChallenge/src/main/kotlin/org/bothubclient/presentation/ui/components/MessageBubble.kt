@@ -2,6 +2,7 @@ package org.bothubclient.presentation.ui.components
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.Card
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.Text
@@ -12,6 +13,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.bothubclient.config.ModelPricing
 import org.bothubclient.domain.entity.Message
 import org.bothubclient.domain.entity.MessageRole
 
@@ -44,27 +46,45 @@ fun MessageBubble(message: Message) {
                 .padding(horizontal = 4.dp)
                 .widthIn(max = 450.dp)
         ) {
-            Column(
-                modifier = Modifier.padding(12.dp)
-            ) {
-                Text(
-                    text = getRoleLabel(message.role),
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = if (isUser) Color.White.copy(alpha = 0.7f) else MaterialTheme.colors.secondary
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = message.content,
-                    fontSize = 14.sp,
-                    color = Color.White
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = message.timestamp,
-                    fontSize = 9.sp,
-                    color = Color.White.copy(alpha = 0.5f)
-                )
+            SelectionContainer {
+                Column(
+                    modifier = Modifier.padding(12.dp)
+                ) {
+                    Text(
+                        text = getRoleLabel(message.role),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isUser) Color.White.copy(alpha = 0.7f) else MaterialTheme.colors.secondary
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = message.content,
+                        fontSize = 14.sp,
+                        color = Color.White
+                    )
+                    if (!isUser && !isError && message.metrics != null) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = buildString {
+                                val cost = message.metrics.cost
+                                append("Время: ${message.metrics.responseTimeMs} мс")
+                                if (cost != null) {
+                                    append(" • Стоимость: ${ModelPricing.formatCostRub(cost)}")
+                                } else {
+                                    append(" • Стоимость: неизвестна")
+                                }
+                            },
+                            fontSize = 10.sp,
+                            color = Color.White.copy(alpha = 0.65f)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = message.timestamp,
+                        fontSize = 9.sp,
+                        color = Color.White.copy(alpha = 0.5f)
+                    )
+                }
             }
         }
     }

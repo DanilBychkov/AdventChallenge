@@ -20,7 +20,15 @@ data class ApiChatRequest(
 data class ApiChatResponse(
     val id: String? = null,
     val choices: List<ApiChatChoice>? = null,
+    val usage: ApiUsage? = null,
     val error: ApiChatError? = null
+)
+
+@Serializable
+data class ApiUsage(
+    val prompt_tokens: Int = 0,
+    val completion_tokens: Int = 0,
+    val total_tokens: Int = 0
 )
 
 @Serializable
