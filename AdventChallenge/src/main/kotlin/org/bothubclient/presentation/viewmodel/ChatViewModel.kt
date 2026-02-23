@@ -21,7 +21,8 @@ class ChatViewModel(
     private val getAvailableModelsUseCase: GetAvailableModelsUseCase,
     private val getSystemPromptsUseCase: GetSystemPromptsUseCase,
     private val validateApiKeyUseCase: ValidateApiKeyUseCase,
-    private val optimizePromptUseCase: OptimizePromptUseCase
+    private val optimizePromptUseCase: OptimizePromptUseCase,
+    private val resetChatSessionUseCase: ResetChatSessionUseCase
 ) {
     var messages by mutableStateOf<List<Message>>(emptyList())
         private set
@@ -161,6 +162,7 @@ class ChatViewModel(
     }
 
     fun resetSession() {
+        resetChatSessionUseCase()
         messages = emptyList()
         inputText = ""
         statusMessage = "Готов к работе"
@@ -257,7 +259,8 @@ class ChatViewModel(
                 validateApiKeyUseCase =
                     org.bothubclient.infrastructure.di.ServiceLocator.validateApiKeyUseCase,
                 optimizePromptUseCase =
-                    org.bothubclient.infrastructure.di.ServiceLocator.optimizePromptUseCase
+                    org.bothubclient.infrastructure.di.ServiceLocator.optimizePromptUseCase,
+                resetChatSessionUseCase = org.bothubclient.infrastructure.di.ServiceLocator.resetChatSessionUseCase
             )
         }
     }
