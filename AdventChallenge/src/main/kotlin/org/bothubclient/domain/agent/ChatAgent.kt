@@ -1,6 +1,7 @@
 package org.bothubclient.domain.agent
 
 import org.bothubclient.domain.entity.ChatResult
+import org.bothubclient.domain.entity.Message
 
 interface ChatAgent {
     suspend fun send(
@@ -11,5 +12,9 @@ interface ChatAgent {
         temperature: Double
     ): ChatResult
 
-    fun reset(sessionId: String)
+    suspend fun getHistory(sessionId: String): List<Message>
+
+    suspend fun getSessionMessages(sessionId: String): List<Message>
+
+    suspend fun reset(sessionId: String)
 }

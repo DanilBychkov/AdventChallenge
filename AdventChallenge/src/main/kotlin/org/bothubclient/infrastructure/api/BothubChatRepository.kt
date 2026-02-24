@@ -93,6 +93,16 @@ class BothubChatRepository(
         }
     }
 
+    override suspend fun getHistory(): List<Message> {
+        // Stateless repository - no history
+        return emptyList()
+    }
+
+    override suspend fun getSessionMessages(): List<Message> {
+        // Stateless repository - no session messages
+        return emptyList()
+    }
+
     companion object {
         fun createDefault(getApiKey: () -> String): BothubChatRepository {
             val requestTimeoutMs = 600_000L

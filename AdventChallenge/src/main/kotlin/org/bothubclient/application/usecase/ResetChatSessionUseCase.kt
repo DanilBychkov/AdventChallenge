@@ -5,7 +5,7 @@ import org.bothubclient.domain.repository.ChatRepository
 class ResetChatSessionUseCase(
     private val chatRepository: ChatRepository
 ) {
-    operator fun invoke() {
+    suspend operator fun invoke() {
         chatRepository.resetSession()
     }
 }

@@ -22,7 +22,9 @@ class ChatViewModel(
     private val getSystemPromptsUseCase: GetSystemPromptsUseCase,
     private val validateApiKeyUseCase: ValidateApiKeyUseCase,
     private val optimizePromptUseCase: OptimizePromptUseCase,
-    private val resetChatSessionUseCase: ResetChatSessionUseCase
+    private val resetChatSessionUseCase: ResetChatSessionUseCase,
+    private val getChatHistoryUseCase: GetChatHistoryUseCase,
+    private val getSessionMessagesUseCase: GetSessionMessagesUseCase
 ) {
     var messages by mutableStateOf<List<Message>>(emptyList())
         private set
@@ -79,6 +81,26 @@ class ChatViewModel(
         get() = getAvailableModelsUseCase()
     val availablePrompts: List<SystemPrompt>
         get() = getSystemPromptsUseCase()
+
+    var isHistoryLoaded by mutableStateOf(false)
+        private set
+
+    fun loadHistory(scope: CoroutineScope) {
+        if (isHistoryLoaded) return
+
+        scope.launch {
+            statusMessage = "Загрузка истории..."
+            val sessionMessages = withContext(Dispatchers.IO) { getSessionMessagesUseCase() }
+            messages = sessionMessages
+            statusMessage =
+                if (sessionMessages.isNotEmpty()) {
+                    "Восстановлено ${sessionMessages.size} сообщений"
+                } else {
+                    "Готов к работе"
+                }
+            isHistoryLoaded = true
+        }
+    }
 
     private fun parseTemperatureOrNull(text: String): Double? {
         val normalized = text.trim().replace(',', '.')
@@ -161,8 +183,8 @@ class ChatViewModel(
         statusMessage = "Используется оригинальный промпт"
     }
 
-    fun resetSession() {
-        resetChatSessionUseCase()
+    fun resetSession(scope: CoroutineScope) {
+        scope.launch { resetChatSessionUseCase() }
         messages = emptyList()
         inputText = ""
         statusMessage = "Готов к работе"
@@ -173,6 +195,7 @@ class ChatViewModel(
         optimizePromptError = null
         temperatureText = "0.7"
         temperatureError = null
+        isHistoryLoaded = true // Session reset, no need to reload from storage
     }
 
     fun sendMessage(scope: CoroutineScope) {
@@ -260,7 +283,14 @@ class ChatViewModel(
                     org.bothubclient.infrastructure.di.ServiceLocator.validateApiKeyUseCase,
                 optimizePromptUseCase =
                     org.bothubclient.infrastructure.di.ServiceLocator.optimizePromptUseCase,
-                resetChatSessionUseCase = org.bothubclient.infrastructure.di.ServiceLocator.resetChatSessionUseCase
+                resetChatSessionUseCase =
+                    org.bothubclient.infrastructure.di.ServiceLocator
+                        .resetChatSessionUseCase,
+                getChatHistoryUseCase =
+                    org.bothubclient.infrastructure.di.ServiceLocator.getChatHistoryUseCase,
+                getSessionMessagesUseCase =
+                    org.bothubclient.infrastructure.di.ServiceLocator
+                        .getSessionMessagesUseCase
             )
         }
     }

@@ -36,6 +36,9 @@ fun ChatScreen(viewModel: ChatViewModel, coroutineScope: CoroutineScope) {
     val minPromptHeight = 120.dp
     val maxPromptHeight = 400.dp
 
+    // Load history on first composition
+    LaunchedEffect(Unit) { viewModel.loadHistory(this) }
+
     LaunchedEffect(viewModel.messages.size) { scrollState.scrollTo(scrollState.maxValue) }
 
     BothubTheme {
@@ -48,7 +51,7 @@ fun ChatScreen(viewModel: ChatViewModel, coroutineScope: CoroutineScope) {
             Header(
                 title = "Bothub Chat Client",
                 showReset = viewModel.messages.isNotEmpty(),
-                onReset = { viewModel.resetSession() }
+                onReset = { viewModel.resetSession(coroutineScope) }
             )
 
             DropdownSelector(
