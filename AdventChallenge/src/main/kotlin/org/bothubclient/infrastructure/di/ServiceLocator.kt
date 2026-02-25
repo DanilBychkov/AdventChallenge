@@ -39,11 +39,7 @@ object ServiceLocator {
     }
 
     private val chatAgent: ChatAgent by lazy {
-        BothubChatAgent(
-            client = httpClient,
-            getApiKey = { apiKeyProvider.getApiKey() },
-            storage = chatHistoryStorage
-        )
+        BothubChatAgent(client = httpClient, getApiKey = { apiKeyProvider.getApiKey() })
     }
 
     private val chatRepository: ChatRepository by lazy {
@@ -74,6 +70,10 @@ object ServiceLocator {
 
     val optimizePromptUseCase: OptimizePromptUseCase by lazy {
         OptimizePromptUseCase(statelessChatRepository)
+    }
+
+    val getTokenStatisticsUseCase: GetTokenStatisticsUseCase by lazy {
+        GetTokenStatisticsUseCase(chatAgent) { "chat-ui" }
     }
 
     fun close() {

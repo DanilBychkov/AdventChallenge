@@ -29,15 +29,17 @@ object ModelPricing {
         "deepseek-chat" to ModelPrice(0.14, 0.28),
         "deepseek-reasoner" to ModelPrice(0.55, 2.19),
         "llama-3.3-70b" to ModelPrice(0.6, 0.6),
+        "llama-3-70b-instruct" to ModelPrice(0.6, 0.6),
         "llama-4-scout" to ModelPrice(0.6, 0.6),
         "grok-4.1-fast" to ModelPrice(2.0, 10.0),
-        "grok-3" to ModelPrice(3.0, 15.0)
+        "grok-3" to ModelPrice(3.0, 15.0),
     )
 
     private val pricingRub = mapOf(
         "gemini-2.0-flash-lite-001" to ModelPrice(8.84, 35.36),
         "grok-4.1-fast" to ModelPrice(23.57, 58.93),
-        "gpt-5.2" to ModelPrice(206.25, 1650.0)
+        "gpt-5.2" to ModelPrice(206.25, 1650.0),
+        "llama-3-70b-instruct" to ModelPrice(70.71, 70.71)
     )
 
     fun calculateCost(model: String, promptTokens: Int, completionTokens: Int): Double? {

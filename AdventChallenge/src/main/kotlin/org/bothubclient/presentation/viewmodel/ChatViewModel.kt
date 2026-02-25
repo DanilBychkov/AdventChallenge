@@ -4,15 +4,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import org.bothubclient.application.usecase.*
 import org.bothubclient.config.ModelPricing
 import org.bothubclient.config.SystemPrompt
 import org.bothubclient.domain.entity.ChatResult
 import org.bothubclient.domain.entity.Message
 import org.bothubclient.domain.entity.MessageMetrics
+import org.bothubclient.domain.entity.SessionTokenStatistics
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -24,7 +23,8 @@ class ChatViewModel(
     private val optimizePromptUseCase: OptimizePromptUseCase,
     private val resetChatSessionUseCase: ResetChatSessionUseCase,
     private val getChatHistoryUseCase: GetChatHistoryUseCase,
-    private val getSessionMessagesUseCase: GetSessionMessagesUseCase
+    private val getSessionMessagesUseCase: GetSessionMessagesUseCase,
+    private val getTokenStatisticsUseCase: GetTokenStatisticsUseCase
 ) {
     var messages by mutableStateOf<List<Message>>(emptyList())
         private set
@@ -65,6 +65,9 @@ class ChatViewModel(
     var temperatureError by mutableStateOf<String?>(null)
         private set
 
+    var tokenStatistics by mutableStateOf(SessionTokenStatistics.EMPTY)
+        private set
+
     val effectivePromptText: String
         get() {
             return if (selectedPrompt.isCustom) {
@@ -90,8 +93,9 @@ class ChatViewModel(
 
         scope.launch {
             statusMessage = "Загрузка истории..."
-            val sessionMessages = withContext(Dispatchers.IO) { getSessionMessagesUseCase() }
+            val sessionMessages = getSessionMessagesUseCase()
             messages = sessionMessages
+            updateTokenStatistics()
             statusMessage =
                 if (sessionMessages.isNotEmpty()) {
                     "Восстановлено ${sessionMessages.size} сообщений"
@@ -100,6 +104,10 @@ class ChatViewModel(
                 }
             isHistoryLoaded = true
         }
+    }
+
+    private fun updateTokenStatistics() {
+        tokenStatistics = getTokenStatisticsUseCase(selectedModel)
     }
 
     private fun parseTemperatureOrNull(text: String): Double? {
@@ -129,6 +137,7 @@ class ChatViewModel(
 
     fun onModelSelected(model: String) {
         selectedModel = model
+        updateTokenStatistics()
     }
 
     fun onPromptSelected(prompt: SystemPrompt) {
@@ -159,10 +168,7 @@ class ChatViewModel(
                 return@launch
             }
 
-            val result =
-                withContext(Dispatchers.IO) {
-                    optimizePromptUseCase(customPromptText, selectedModel)
-                }
+            val result = optimizePromptUseCase(customPromptText, selectedModel)
 
             when (result) {
                 is OptimizePromptResult.Success -> {
@@ -195,7 +201,8 @@ class ChatViewModel(
         optimizePromptError = null
         temperatureText = "0.7"
         temperatureError = null
-        isHistoryLoaded = true // Session reset, no need to reload from storage
+        tokenStatistics = SessionTokenStatistics.EMPTY
+        isHistoryLoaded = true
     }
 
     fun sendMessage(scope: CoroutineScope) {
@@ -211,7 +218,6 @@ class ChatViewModel(
 
         val userMessage = inputText.trim()
         messages = messages + Message.user(userMessage)
-        // UX: разрешаем набирать следующее сообщение, пока текущий запрос в полёте
         inputText = ""
         isLoading = true
         statusMessage = "Отправка запроса..."
@@ -227,14 +233,7 @@ class ChatViewModel(
             }
 
             val result =
-                withContext(Dispatchers.IO) {
-                    sendMessageUseCase(
-                        userMessage,
-                        selectedModel,
-                        effectivePromptText,
-                        temperature
-                    )
-                }
+                sendMessageUseCase(userMessage, selectedModel, effectivePromptText, temperature)
 
             when (result) {
                 is ChatResult.Success -> {
@@ -257,7 +256,14 @@ class ChatViewModel(
                             )
                         )
                     messages = messages + messageWithMetrics
-                    statusMessage = "Готов к работе"
+                    updateTokenStatistics()
+
+                    if (tokenStatistics.isApproachingLimit) {
+                        statusMessage =
+                            "⚠ Внимание: ${"%.1f".format(tokenStatistics.contextUsagePercent)}% контекста использовано"
+                    } else {
+                        statusMessage = "Готов к работе"
+                    }
                 }
                 is ChatResult.Error -> {
                     messages = messages + Message.error("Ошибка: ${result.exception.message}")
@@ -290,7 +296,10 @@ class ChatViewModel(
                     org.bothubclient.infrastructure.di.ServiceLocator.getChatHistoryUseCase,
                 getSessionMessagesUseCase =
                     org.bothubclient.infrastructure.di.ServiceLocator
-                        .getSessionMessagesUseCase
+                        .getSessionMessagesUseCase,
+                getTokenStatisticsUseCase =
+                    org.bothubclient.infrastructure.di.ServiceLocator
+                        .getTokenStatisticsUseCase
             )
         }
     }

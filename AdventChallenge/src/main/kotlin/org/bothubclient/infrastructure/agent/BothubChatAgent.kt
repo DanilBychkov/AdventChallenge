@@ -7,76 +7,162 @@ import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
 import org.bothubclient.config.ApiConfig
+import org.bothubclient.config.ModelContextLimits
+import org.bothubclient.config.ModelPricing
 import org.bothubclient.domain.agent.ChatAgent
-import org.bothubclient.domain.entity.ChatResult
-import org.bothubclient.domain.entity.Message
-import org.bothubclient.domain.entity.MessageRole
-import org.bothubclient.domain.entity.RequestMetrics
-import org.bothubclient.domain.repository.ChatHistoryStorage
+import org.bothubclient.domain.entity.*
 import org.bothubclient.infrastructure.api.ApiChatMessage
 import org.bothubclient.infrastructure.api.ApiChatRequest
 import org.bothubclient.infrastructure.api.ApiChatResponse
+import org.bothubclient.infrastructure.logging.AppLogger
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.system.measureTimeMillis
+
+private class TokenAccumulator {
+    private val _totalPromptTokens = AtomicInteger(0)
+    private val _totalCompletionTokens = AtomicInteger(0)
+    private val _totalTokens = AtomicInteger(0)
+    private val _messageCount = AtomicInteger(0)
+    private val _lastPromptTokens = AtomicInteger(0)
+    private val _lastCompletionTokens = AtomicInteger(0)
+
+    val totalPromptTokens: Int get() = _totalPromptTokens.get()
+    val totalCompletionTokens: Int get() = _totalCompletionTokens.get()
+    val totalTokens: Int get() = _totalTokens.get()
+    val messageCount: Int get() = _messageCount.get()
+    val lastPromptTokens: Int get() = _lastPromptTokens.get()
+    val lastCompletionTokens: Int get() = _lastCompletionTokens.get()
+
+    fun update(promptTokens: Int, completionTokens: Int, totalTokens: Int) {
+        _totalPromptTokens.addAndGet(promptTokens)
+        _totalCompletionTokens.addAndGet(completionTokens)
+        _totalTokens.addAndGet(totalTokens)
+        _messageCount.incrementAndGet()
+        _lastPromptTokens.set(promptTokens)
+        _lastCompletionTokens.set(completionTokens)
+    }
+
+    fun reduceProportionally(factor: Float) {
+        _totalPromptTokens.set((_totalPromptTokens.get() * factor).toInt())
+        _totalCompletionTokens.set((_totalCompletionTokens.get() * factor).toInt())
+        _totalTokens.set((_totalTokens.get() * factor).toInt())
+        _messageCount.set((_messageCount.get() * factor).toInt())
+    }
+
+    fun snapshot(): TokenSnapshot = TokenSnapshot(
+        totalPromptTokens = _totalPromptTokens.get(),
+        totalCompletionTokens = _totalCompletionTokens.get(),
+        totalTokens = _totalTokens.get(),
+        messageCount = _messageCount.get(),
+        lastPromptTokens = _lastPromptTokens.get(),
+        lastCompletionTokens = _lastCompletionTokens.get()
+    )
+}
+
+private data class TokenSnapshot(
+    val totalPromptTokens: Int,
+    val totalCompletionTokens: Int,
+    val totalTokens: Int,
+    val messageCount: Int,
+    val lastPromptTokens: Int,
+    val lastCompletionTokens: Int
+)
 
 class BothubChatAgent(
     private val client: HttpClient,
     private val getApiKey: () -> String,
-    private val maxHistoryMessages: Int = 20,
-    private val storage: ChatHistoryStorage? = null
+    private val maxHistoryMessages: Int = 20
 ) : ChatAgent {
 
     private val historyBySessionId = ConcurrentHashMap<String, MutableList<Message>>()
-    private val loadedSessions = ConcurrentHashMap<String, Unit>().keySet(Unit)
-    private val persistedCountBySession = ConcurrentHashMap<String, Int>()
+    private val sessionTokenAccumulator = ConcurrentHashMap<String, TokenAccumulator>()
+
+    companion object {
+        private const val TAG = "BothubChatAgent"
+        private const val CONTEXT_LENGTH_EXCEEDED = "context_length_exceeded"
+    }
+
+    override suspend fun reset(sessionId: String) {
+        AppLogger.i(TAG, "Resetting session: $sessionId")
+        historyBySessionId.remove(sessionId)
+        sessionTokenAccumulator.remove(sessionId)
+    }
 
     override suspend fun getHistory(sessionId: String): List<Message> {
-        ensureHistoryLoaded(sessionId)
         return historyBySessionId[sessionId]?.toList().orEmpty()
     }
 
     override suspend fun getSessionMessages(sessionId: String): List<Message> {
-        ensureHistoryLoaded(sessionId)
-        val history = historyBySessionId[sessionId] ?: return emptyList()
-        val persistedCount = persistedCountBySession[sessionId] ?: 0
-        return if (persistedCount < history.size) {
-            history.subList(persistedCount, history.size).toList()
-        } else {
-            emptyList()
+        return historyBySessionId[sessionId]?.toList().orEmpty()
+    }
+
+    override fun getSessionTokenStatistics(sessionId: String, model: String): SessionTokenStatistics {
+        val accumulator = sessionTokenAccumulator[sessionId] ?: return SessionTokenStatistics.EMPTY
+        val snapshot = accumulator.snapshot()
+
+        val contextLimit = ModelContextLimits.getContextLimit(model)
+        val contextUsagePercent = ModelContextLimits.getContextUsagePercent(snapshot.totalTokens, model)
+        val estimatedCost = ModelPricing.calculateCostRub(
+            model,
+            snapshot.totalPromptTokens,
+            snapshot.totalCompletionTokens
+        )
+
+        return SessionTokenStatistics(
+            sessionId = sessionId,
+            totalPromptTokens = snapshot.totalPromptTokens,
+            totalCompletionTokens = snapshot.totalCompletionTokens,
+            totalTokens = snapshot.totalTokens,
+            messageCount = snapshot.messageCount,
+            estimatedCostRub = estimatedCost,
+            lastRequestTokens = snapshot.lastPromptTokens,
+            lastResponseTokens = snapshot.lastCompletionTokens,
+            contextLimit = contextLimit,
+            contextUsagePercent = contextUsagePercent
+        )
+    }
+
+    override fun getTotalHistoryTokens(sessionId: String): Int {
+        return sessionTokenAccumulator[sessionId]?.totalTokens ?: 0
+    }
+
+    override fun isApproachingContextLimit(sessionId: String, model: String, threshold: Float): Boolean {
+        val totalTokens = getTotalHistoryTokens(sessionId)
+        val isApproaching = ModelContextLimits.isApproachingLimit(totalTokens, model, threshold)
+
+        if (isApproaching) {
+            val usagePercent = ModelContextLimits.getContextUsagePercent(totalTokens, model)
+            val remaining = ModelContextLimits.getRemainingTokens(totalTokens, model)
+
+            if (usagePercent > 95f) {
+                AppLogger.contextCritical(TAG, sessionId, usagePercent)
+            } else {
+                AppLogger.contextWarning(TAG, sessionId, usagePercent, remaining)
+            }
         }
+
+        return isApproaching
     }
 
-    override suspend fun reset(sessionId: String) {
-        historyBySessionId.remove(sessionId)
-        persistedCountBySession.remove(sessionId)
-        loadedSessions.remove(sessionId)
-        storage?.deleteHistory(sessionId)
-    }
+    override fun truncateHistory(sessionId: String, keepLast: Int) {
+        val history = historyBySessionId[sessionId] ?: return
+        val originalSize = history.size
 
-    private suspend fun ensureHistoryLoaded(sessionId: String) {
-        if (sessionId !in loadedSessions && storage != null) {
-            println("[BothubChatAgent] Loading history for session: $sessionId")
-            val saved = storage.loadHistory(sessionId)
-            println("[BothubChatAgent] Loaded ${saved.size} messages from storage")
-            synchronized(this) {
-                if (sessionId !in loadedSessions) {
-                    if (saved.isNotEmpty()) {
-                        historyBySessionId[sessionId] = saved.toMutableList()
-                        persistedCountBySession[sessionId] = saved.size
-                        println(
-                            "[BothubChatAgent] History set for session, persistedCount = ${saved.size}"
-                        )
-                    } else {
-                        historyBySessionId[sessionId] = mutableListOf()
-                        persistedCountBySession[sessionId] = 0
-                        println("[BothubChatAgent] No saved history, initialized empty list")
-                    }
-                    loadedSessions.add(sessionId)
+        if (originalSize > keepLast) {
+            val toRemove = originalSize - keepLast
+            repeat(toRemove) {
+                if (history.isNotEmpty()) {
+                    history.removeAt(0)
                 }
             }
-        } else if (sessionId in loadedSessions) {
-            println(
-                "[BothubChatAgent] Session already loaded: $sessionId, history size = ${historyBySessionId[sessionId]?.size ?: 0}"
+
+            val factor = keepLast.toFloat() / originalSize
+            sessionTokenAccumulator[sessionId]?.reduceProportionally(factor)
+
+            AppLogger.i(
+                TAG,
+                "Truncated history for session $sessionId: removed $toRemove messages, keeping $keepLast, token stats reduced by ${(1 - factor) * 100}%"
             )
         }
     }
@@ -88,7 +174,10 @@ class BothubChatAgent(
         systemPrompt: String,
         temperature: Double
     ): ChatResult {
-        ensureHistoryLoaded(sessionId)
+        val historySize = historyBySessionId[sessionId]?.size ?: 0
+
+        AppLogger.requestStart(TAG, sessionId, model, historySize, userMessage.length)
+        
         return try {
             val apiKey = getApiKey()
             val trimmedUrl = ApiConfig.BASE_URL.trim().trimEnd(',', ' ')
@@ -97,56 +186,51 @@ class BothubChatAgent(
                 add(ApiChatMessage(role = "system", content = systemPrompt))
 
                 val past = historyBySessionId[sessionId]?.toList().orEmpty()
-                println("[BothubChatAgent] Building API messages, past history size = ${past.size}")
                 past.forEach { message ->
-                    val role =
-                        when (message.role) {
-                            MessageRole.USER -> "user"
-                            MessageRole.ASSISTANT -> "assistant"
-                            else -> null
-                        }
+                    val role = when (message.role) {
+                        MessageRole.USER -> "user"
+                        MessageRole.ASSISTANT -> "assistant"
+                        else -> null
+                    }
                     if (role != null) {
-                        println(
-                            "[BothubChatAgent] Adding message: role=$role, content=${message.content.take(50)}..."
-                        )
                         add(ApiChatMessage(role = role, content = message.content))
                     }
                 }
 
                 add(ApiChatMessage(role = "user", content = userMessage))
             }
-            println("[BothubChatAgent] Total API messages count = ${apiMessages.size}")
 
-            val request =
-                ApiChatRequest(
-                    model = model,
-                    messages = apiMessages,
-                    max_tokens = ApiConfig.DEFAULT_MAX_TOKENS,
-                    temperature = temperature
-                )
+            val request = ApiChatRequest(
+                model = model,
+                messages = apiMessages,
+                max_tokens = ApiConfig.DEFAULT_MAX_TOKENS,
+                temperature = temperature
+            )
 
             var responseTimeMs = 0L
             val chatResponse: ApiChatResponse
             responseTimeMs = measureTimeMillis {
-                val response: HttpResponse =
-                    client.post(trimmedUrl) {
-                        headers {
-                            append(HttpHeaders.Authorization, "Bearer $apiKey")
-                            append(
-                                HttpHeaders.ContentType,
-                                ContentType.Application.Json.toString()
-                            )
-                            append(HttpHeaders.Accept, ContentType.Application.Json.toString())
-                        }
-                        timeout {
-                            requestTimeoutMillis = 600_000
-                            socketTimeoutMillis = 600_000
-                        }
-                        setBody(request)
+                val response: HttpResponse = client.post(trimmedUrl) {
+                    headers {
+                        append(HttpHeaders.Authorization, "Bearer $apiKey")
+                        append(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+                        append(HttpHeaders.Accept, ContentType.Application.Json.toString())
                     }
+                    timeout {
+                        requestTimeoutMillis = 600_000
+                        socketTimeoutMillis = 600_000
+                    }
+                    setBody(request)
+                }
 
                 if (!response.status.isSuccess()) {
                     val errorBody = response.bodyAsText()
+                    AppLogger.e(TAG, "HTTP error ${response.status}", null)
+
+                    if (errorBody.contains(CONTEXT_LENGTH_EXCEEDED, ignoreCase = true)) {
+                        return handleContextLengthExceeded(sessionId, model, errorBody)
+                    }
+                    
                     return ChatResult.Error(Exception("HTTP ошибка ${response.status}: $errorBody"))
                 }
 
@@ -155,54 +239,96 @@ class BothubChatAgent(
 
             when {
                 chatResponse.error != null -> {
-                    ChatResult.Error(Exception("API ошибка: ${chatResponse.error.message}"))
+                    val errorMsg = chatResponse.error.message ?: "Unknown error"
+                    val errorType = chatResponse.error.type
+                    val errorCode = chatResponse.error.code
+
+                    AppLogger.e(TAG, "API error: $errorMsg (type=$errorType, code=$errorCode)", null)
+
+                    if (errorType == CONTEXT_LENGTH_EXCEEDED || errorCode == CONTEXT_LENGTH_EXCEEDED) {
+                        return handleContextLengthExceeded(sessionId, model, errorMsg)
+                    }
+
+                    ChatResult.Error(Exception("API ошибка: $errorMsg"))
                 }
+
                 chatResponse.choices.isNullOrEmpty() -> {
+                    AppLogger.e(TAG, "Empty response from model", null)
                     ChatResult.Error(Exception("Не удалось получить ответ от модели"))
                 }
+
                 else -> {
-                    val content =
-                        chatResponse.choices.first().message?.content
-                            ?: "Не удалось получить ответ от модели"
+                    val content = chatResponse.choices.first().message?.content
+                        ?: "Не удалось получить ответ от модели"
 
                     historyBySessionId.compute(sessionId) { _, current ->
-                        val updated =
-                            (current ?: mutableListOf()).apply {
-                                add(Message.user(userMessage))
-                                add(Message.assistant(content))
-                                while (size > maxHistoryMessages) {
-                                    removeAt(0)
-                                }
+                        val updated = (current ?: mutableListOf()).apply {
+                            add(Message.user(userMessage))
+                            add(Message.assistant(content))
+                            while (size > maxHistoryMessages) {
+                                removeAt(0)
                             }
+                        }
                         updated
                     }
 
-                    val currentSize = historyBySessionId[sessionId]?.size ?: 0
-                    val currentPersisted = persistedCountBySession[sessionId] ?: 0
-                    if (currentPersisted > currentSize) {
-                        persistedCountBySession[sessionId] = currentSize
-                    }
+                    val promptTokens = chatResponse.usage?.prompt_tokens ?: 0
+                    val completionTokens = chatResponse.usage?.completion_tokens ?: 0
+                    val totalTokens = chatResponse.usage?.total_tokens ?: 0
 
-                    storage?.saveHistory(
-                        sessionId,
-                        historyBySessionId[sessionId]?.toList().orEmpty()
-                    )
-                    println(
-                        "[BothubChatAgent] Saved history, total size = ${historyBySessionId[sessionId]?.size ?: 0}"
+                    updateTokenAccumulator(sessionId, promptTokens, completionTokens, totalTokens)
+
+                    val contextUsagePercent = ModelContextLimits.getContextUsagePercent(
+                        sessionTokenAccumulator[sessionId]?.totalTokens ?: 0,
+                        model
                     )
 
-                    val metrics =
-                        RequestMetrics(
-                            promptTokens = chatResponse.usage?.prompt_tokens ?: 0,
-                            completionTokens = chatResponse.usage?.completion_tokens ?: 0,
-                            totalTokens = chatResponse.usage?.total_tokens ?: 0,
-                            responseTimeMs = responseTimeMs
-                        )
+                    AppLogger.tokenInfo(
+                        TAG, sessionId,
+                        promptTokens, completionTokens, totalTokens,
+                        contextUsagePercent, model
+                    )
+
+                    AppLogger.requestEnd(TAG, sessionId, responseTimeMs, totalTokens)
+
+                    val metrics = RequestMetrics(
+                        promptTokens = promptTokens,
+                        completionTokens = completionTokens,
+                        totalTokens = totalTokens,
+                        responseTimeMs = responseTimeMs
+                    )
                     ChatResult.Success(Message.assistant(content), metrics)
                 }
             }
         } catch (e: Exception) {
+            AppLogger.e(TAG, "Request failed", e)
             ChatResult.Error(e)
+        }
+    }
+
+    private fun handleContextLengthExceeded(sessionId: String, model: String, errorDetails: String): ChatResult.Error {
+        AppLogger.w(TAG, "Context length exceeded for session $sessionId | $errorDetails")
+
+        val historySize = historyBySessionId[sessionId]?.size ?: 0
+        val suggestion = buildString {
+            append("Превышен лимит контекста модели. ")
+            append("Текущая история: $historySize сообщений. ")
+            append("Рекомендуется: сбросить сессию или история будет автоматически сокращена.")
+        }
+
+        return ChatResult.Error(Exception(suggestion))
+    }
+
+    private fun updateTokenAccumulator(
+        sessionId: String,
+        promptTokens: Int,
+        completionTokens: Int,
+        totalTokens: Int
+    ) {
+        sessionTokenAccumulator.compute(sessionId) { _, accumulator ->
+            (accumulator ?: TokenAccumulator()).apply {
+                update(promptTokens, completionTokens, totalTokens)
+            }
         }
     }
 }

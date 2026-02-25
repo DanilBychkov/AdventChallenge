@@ -22,6 +22,7 @@ object AvailableModels {
         "deepseek-chat",
         "deepseek-reasoner",
         "llama-3.3-70b",
+        "llama-3-70b-instruct",
         "llama-4-scout"
     )
 

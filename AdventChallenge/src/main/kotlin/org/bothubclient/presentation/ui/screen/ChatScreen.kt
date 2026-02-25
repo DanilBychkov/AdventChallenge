@@ -137,6 +137,11 @@ fun ChatScreen(viewModel: ChatViewModel, coroutineScope: CoroutineScope) {
                 ErrorCard(message = error)
             }
 
+            if (viewModel.messages.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                TokenStatisticsPanel(statistics = viewModel.tokenStatistics)
+            }
+
             MessagesContainer(
                 messages = viewModel.messages,
                 scrollState = scrollState,
