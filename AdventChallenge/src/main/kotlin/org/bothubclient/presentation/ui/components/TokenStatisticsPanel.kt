@@ -1,8 +1,6 @@
 package org.bothubclient.presentation.ui.components
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.Card
 import androidx.compose.material.LinearProgressIndicator
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.Text
@@ -20,6 +18,8 @@ import kotlin.math.roundToInt
 @Composable
 fun TokenStatisticsPanel(
     statistics: SessionTokenStatistics,
+    isExpanded: Boolean,
+    onToggle: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val usagePercent = statistics.contextUsagePercent.coerceIn(0f, 100f)
@@ -36,111 +36,97 @@ fun TokenStatisticsPanel(
         else -> null
     }
 
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        backgroundColor = MaterialTheme.colors.surface,
-        shape = RoundedCornerShape(8.dp)
+    CollapsibleCard(
+        title = "Статистика сессии",
+        isExpanded = isExpanded,
+        onToggle = onToggle,
+        modifier = modifier,
+        titleTrailing = {
+            Text(
+                text = "${statistics.messageCount} сообщений",
+                fontSize = 11.sp,
+                color = Color.Gray
+            )
+        }
     ) {
-        Column(
-            modifier = Modifier.padding(12.dp)
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Статистика сессии",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colors.secondary
-                )
-                Text(
-                    text = "${statistics.messageCount} сообщений",
-                    fontSize = 11.sp,
-                    color = Color.Gray
-                )
-            }
+            Text(
+                text = "Контекст:",
+                fontSize = 11.sp,
+                color = Color.White.copy(alpha = 0.8f)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            LinearProgressIndicator(
+                progress = usagePercent / 100f,
+                modifier = Modifier.weight(1f).height(6.dp),
+                color = progressColor,
+                backgroundColor = Color.DarkGray
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = "${formatDecimal(usagePercent.toDouble(), 1)}%",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                color = progressColor
+            )
+        }
 
-            Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Контекст:",
-                    fontSize = 11.sp,
-                    color = Color.White.copy(alpha = 0.8f)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                LinearProgressIndicator(
-                    progress = usagePercent / 100f,
-                    modifier = Modifier.weight(1f).height(6.dp),
-                    color = progressColor,
-                    backgroundColor = Color.DarkGray
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "${formatDecimal(usagePercent.toDouble(), 1)}%",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = progressColor
-                )
-            }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            TokenStatItem(
+                label = "Запрос",
+                value = formatTokenCount(statistics.lastRequestTokens),
+                subValue = "Всего: ${formatTokenCount(statistics.totalPromptTokens)}"
+            )
+            TokenStatItem(
+                label = "Ответ",
+                value = formatTokenCount(statistics.lastResponseTokens),
+                subValue = "Всего: ${formatTokenCount(statistics.totalCompletionTokens)}"
+            )
+            TokenStatItem(
+                label = "Токенов",
+                value = formatTokenCount(statistics.totalTokens),
+                subValue = "Осталось: ${formatTokenCount(statistics.remainingTokens)}"
+            )
+        }
 
-            Spacer(modifier = Modifier.height(8.dp))
-
+        statistics.estimatedCostRub?.let { cost ->
+            Spacer(modifier = Modifier.height(6.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                TokenStatItem(
-                    label = "Запрос",
-                    value = formatTokenCount(statistics.lastRequestTokens),
-                    subValue = "Всего: ${formatTokenCount(statistics.totalPromptTokens)}"
-                )
-                TokenStatItem(
-                    label = "Ответ",
-                    value = formatTokenCount(statistics.lastResponseTokens),
-                    subValue = "Всего: ${formatTokenCount(statistics.totalCompletionTokens)}"
-                )
-                TokenStatItem(
-                    label = "Токенов",
-                    value = formatTokenCount(statistics.totalTokens),
-                    subValue = "Осталось: ${formatTokenCount(statistics.remainingTokens)}"
-                )
-            }
-
-            statistics.estimatedCostRub?.let { cost ->
-                Spacer(modifier = Modifier.height(6.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        text = "Стоимость сессии:",
-                        fontSize = 11.sp,
-                        color = Color.White.copy(alpha = 0.7f)
-                    )
-                    Text(
-                        text = ModelPricing.formatCostRub(cost),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colors.secondary
-                    )
-                }
-            }
-
-            warningText?.let { warning ->
-                Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = warning,
+                    text = "Стоимость сессии:",
+                    fontSize = 11.sp,
+                    color = Color.White.copy(alpha = 0.7f)
+                )
+                Text(
+                    text = ModelPricing.formatCostRub(cost),
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Medium,
-                    color = progressColor
+                    color = MaterialTheme.colors.secondary
                 )
             }
+        }
+
+        warningText?.let { warning ->
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = warning,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                color = progressColor
+            )
         }
     }
 }

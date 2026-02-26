@@ -8,10 +8,9 @@ import kotlinx.coroutines.launch
 import org.bothubclient.application.usecase.*
 import org.bothubclient.config.ModelPricing
 import org.bothubclient.config.SystemPrompt
-import org.bothubclient.domain.entity.ChatResult
-import org.bothubclient.domain.entity.Message
-import org.bothubclient.domain.entity.MessageMetrics
-import org.bothubclient.domain.entity.SessionTokenStatistics
+import org.bothubclient.domain.entity.*
+import org.bothubclient.infrastructure.agent.CompressingChatAgent
+import org.bothubclient.infrastructure.logging.FileLogger
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -24,8 +23,12 @@ class ChatViewModel(
     private val resetChatSessionUseCase: ResetChatSessionUseCase,
     private val getChatHistoryUseCase: GetChatHistoryUseCase,
     private val getSessionMessagesUseCase: GetSessionMessagesUseCase,
-    private val getTokenStatisticsUseCase: GetTokenStatisticsUseCase
+    private val getTokenStatisticsUseCase: GetTokenStatisticsUseCase,
+    private val compressingChatAgent: CompressingChatAgent? = null
 ) {
+
+    private fun log(message: String) = FileLogger.log("ChatViewModel", message)
+
     var messages by mutableStateOf<List<Message>>(emptyList())
         private set
 
@@ -68,6 +71,18 @@ class ChatViewModel(
     var tokenStatistics by mutableStateOf(SessionTokenStatistics.EMPTY)
         private set
 
+    var contextConfig by mutableStateOf(ContextConfig.DEFAULT)
+        private set
+
+    var summaryBlocks by mutableStateOf<List<SummaryBlock>>(emptyList())
+        private set
+
+    var isContextConfigExpanded by mutableStateOf(false)
+        private set
+
+    var lastCompressionError by mutableStateOf<String?>(null)
+        private set
+
     val effectivePromptText: String
         get() {
             return if (selectedPrompt.isCustom) {
@@ -96,6 +111,7 @@ class ChatViewModel(
             val sessionMessages = getSessionMessagesUseCase()
             messages = sessionMessages
             updateTokenStatistics()
+            updateSummaryBlocks()
             statusMessage =
                 if (sessionMessages.isNotEmpty()) {
                     "Восстановлено ${sessionMessages.size} сообщений"
@@ -108,6 +124,39 @@ class ChatViewModel(
 
     private fun updateTokenStatistics() {
         tokenStatistics = getTokenStatisticsUseCase(selectedModel)
+    }
+
+    private fun updateSummaryBlocks() {
+        compressingChatAgent?.let { agent ->
+            summaryBlocks = agent.getSummaryBlocks("chat-ui")
+            log("Updated summary blocks: ${summaryBlocks.size}")
+        }
+    }
+
+    fun updateContextConfig(newConfig: ContextConfig) {
+        log("CONFIG UPDATE: old=$contextConfig -> new=$newConfig")
+        contextConfig = newConfig
+        compressingChatAgent?.updateConfig(newConfig)
+    }
+
+    fun toggleContextConfigExpanded() {
+        isContextConfigExpanded = !isContextConfigExpanded
+        log("Context config expanded: $isContextConfigExpanded")
+    }
+
+    fun onKeepLastNChanged(value: Int) {
+        log("onKeepLastNChanged: $value")
+        updateContextConfig(contextConfig.withKeepLastN(value))
+    }
+
+    fun onCompressionBlockSizeChanged(value: Int) {
+        log("onCompressionBlockSizeChanged: $value")
+        updateContextConfig(contextConfig.withCompressionBlockSize(value))
+    }
+
+    fun onAutoCompressionToggled(enabled: Boolean) {
+        log("onAutoCompressionToggled: $enabled")
+        updateContextConfig(contextConfig.withAutoCompression(enabled))
     }
 
     private fun parseTemperatureOrNull(text: String): Double? {
@@ -202,6 +251,8 @@ class ChatViewModel(
         temperatureText = "0.7"
         temperatureError = null
         tokenStatistics = SessionTokenStatistics.EMPTY
+        summaryBlocks = emptyList()
+        lastCompressionError = null
         isHistoryLoaded = true
     }
 
@@ -257,8 +308,11 @@ class ChatViewModel(
                         )
                     messages = messages + messageWithMetrics
                     updateTokenStatistics()
+                    updateSummaryBlocks()
 
-                    if (tokenStatistics.isApproachingLimit) {
+                    if (summaryBlocks.isNotEmpty()) {
+                        statusMessage = "Готов к работе (${summaryBlocks.size} блоков сжатия)"
+                    } else if (tokenStatistics.isApproachingLimit) {
                         statusMessage =
                             "⚠ Внимание: ${"%.1f".format(tokenStatistics.contextUsagePercent)}% контекста использовано"
                     } else {
@@ -299,7 +353,9 @@ class ChatViewModel(
                         .getSessionMessagesUseCase,
                 getTokenStatisticsUseCase =
                     org.bothubclient.infrastructure.di.ServiceLocator
-                        .getTokenStatisticsUseCase
+                        .getTokenStatisticsUseCase,
+                compressingChatAgent =
+                    org.bothubclient.infrastructure.di.ServiceLocator.compressingChatAgent
             )
         }
     }

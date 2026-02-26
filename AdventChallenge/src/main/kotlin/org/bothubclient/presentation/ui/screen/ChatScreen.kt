@@ -1,18 +1,20 @@
 package org.bothubclient.presentation.ui.screen
 
-import androidx.compose.foundation.ScrollState
-import androidx.compose.foundation.background
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -31,12 +33,16 @@ fun ChatScreen(viewModel: ChatViewModel, coroutineScope: CoroutineScope) {
     val scrollState = rememberScrollState()
     val promptScrollState = rememberScrollState()
 
-    var promptPanelHeight by remember { mutableStateOf(PanelSizePreferences.promptPanelHeight.dp) }
+    var promptPanelHeight by remember {
+        mutableStateOf(PanelSizePreferences.promptPanelHeight.dp)
+    }
+
+    var isStatsExpanded by remember { mutableStateOf(true) }
+    var isPromptExpanded by remember { mutableStateOf(true) }
 
     val minPromptHeight = 120.dp
     val maxPromptHeight = 400.dp
 
-    // Load history on first composition
     LaunchedEffect(Unit) { viewModel.loadHistory(this) }
 
     LaunchedEffect(viewModel.messages.size) { scrollState.scrollTo(scrollState.maxValue) }
@@ -77,8 +83,10 @@ fun ChatScreen(viewModel: ChatViewModel, coroutineScope: CoroutineScope) {
                     colors =
                         TextFieldDefaults.outlinedTextFieldColors(
                             textColor = Color.White,
-                            backgroundColor = MaterialTheme.colors.surface,
-                            focusedBorderColor = MaterialTheme.colors.primary,
+                            backgroundColor =
+                                MaterialTheme.colors.surface,
+                            focusedBorderColor =
+                                MaterialTheme.colors.primary,
                             unfocusedBorderColor = Color.Gray
                         ),
                     shape = RoundedCornerShape(12.dp),
@@ -86,7 +94,11 @@ fun ChatScreen(viewModel: ChatViewModel, coroutineScope: CoroutineScope) {
                 )
                 viewModel.temperatureError?.let { error ->
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text(text = error, fontSize = 12.sp, color = Color(0xFFFF6B6B))
+                    Text(
+                        text = error,
+                        fontSize = 12.sp,
+                        color = Color(0xFFFF6B6B)
+                    )
                 }
             }
 
@@ -104,31 +116,62 @@ fun ChatScreen(viewModel: ChatViewModel, coroutineScope: CoroutineScope) {
             )
 
             if (viewModel.selectedPrompt.isCustom) {
-                CustomPromptInputSection(
-                    customText = viewModel.customPromptText,
-                    onCustomTextChanged = { viewModel.onCustomPromptTextChanged(it) },
-                    enabled = canChangePrompt,
-                    onOptimizeClick = { viewModel.optimizeCustomPrompt(coroutineScope) },
-                    isOptimizing = viewModel.isOptimizingPrompt,
-                    optimizedPrompt = viewModel.optimizedPromptText,
-                    hasOptimizedPrompt = viewModel.hasOptimizedPrompt,
-                    onUseOriginalClick = { viewModel.useOriginalPrompt() },
-                    optimizeError = viewModel.optimizePromptError,
+                CollapsiblePromptCard(
+                    title =
+                        if (viewModel.hasOptimizedPrompt)
+                            "Оптимизированный промпт"
+                        else "Ваш системный промпт",
+                    isExpanded = isPromptExpanded,
+                    onToggle = { isPromptExpanded = !isPromptExpanded },
                     modifier = Modifier.height(promptPanelHeight)
-                )
+                ) {
+                    CustomPromptContent(
+                        customText = viewModel.customPromptText,
+                        onCustomTextChanged = {
+                            viewModel.onCustomPromptTextChanged(it)
+                        },
+                        enabled = canChangePrompt,
+                        onOptimizeClick = {
+                            viewModel.optimizeCustomPrompt(
+                                coroutineScope
+                            )
+                        },
+                        isOptimizing = viewModel.isOptimizingPrompt,
+                        optimizedPrompt = viewModel.optimizedPromptText,
+                        hasOptimizedPrompt = viewModel.hasOptimizedPrompt,
+                        onUseOriginalClick = {
+                            viewModel.useOriginalPrompt()
+                        },
+                        optimizeError = viewModel.optimizePromptError
+                    )
+                }
             } else {
-                SystemPromptCard(
-                    prompt = viewModel.selectedPrompt.text,
-                    scrollState = promptScrollState,
+                CollapsiblePromptCard(
+                    title = "Текст системного промта",
+                    isExpanded = isPromptExpanded,
+                    onToggle = { isPromptExpanded = !isPromptExpanded },
                     modifier = Modifier.height(promptPanelHeight)
-                )
+                ) {
+                    Column(
+                        modifier =
+                            Modifier.verticalScroll(promptScrollState)
+                    ) {
+                        Text(
+                            text = viewModel.selectedPrompt.text,
+                            fontSize = 12.sp,
+                            color = Color.White
+                        )
+                    }
+                }
             }
 
             ResizableDivider(
                 onDrag = { delta ->
                     val newHeight = promptPanelHeight + delta.dp
-                    promptPanelHeight = newHeight.coerceIn(minPromptHeight, maxPromptHeight)
-                    PanelSizePreferences.promptPanelHeight = promptPanelHeight.value.toInt()
+                    promptPanelHeight =
+                        newHeight.coerceIn(minPromptHeight, maxPromptHeight)
+                    PanelSizePreferences.promptPanelHeight =
+                        promptPanelHeight.value.toInt()
                 }
             )
 
@@ -139,7 +182,31 @@ fun ChatScreen(viewModel: ChatViewModel, coroutineScope: CoroutineScope) {
 
             if (viewModel.messages.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(8.dp))
-                TokenStatisticsPanel(statistics = viewModel.tokenStatistics)
+                TokenStatisticsPanel(
+                    statistics = viewModel.tokenStatistics,
+                    isExpanded = isStatsExpanded,
+                    onToggle = { isStatsExpanded = !isStatsExpanded }
+                )
+
+                if (viewModel.summaryBlocks.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    SummaryPanel(summaryBlocks = viewModel.summaryBlocks)
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                ContextConfigPanel(
+                    config = viewModel.contextConfig,
+                    isExpanded = viewModel.isContextConfigExpanded,
+                    onToggle = { viewModel.toggleContextConfigExpanded() },
+                    onKeepLastNChanged = { viewModel.onKeepLastNChanged(it) },
+                    onCompressionBlockSizeChanged = {
+                        viewModel.onCompressionBlockSizeChanged(it)
+                    },
+                    onAutoCompressionToggled = {
+                        viewModel.onAutoCompressionToggled(it)
+                    },
+                    enabled = !viewModel.isLoading
+                )
             }
 
             MessagesContainer(
@@ -168,45 +235,146 @@ fun ChatScreen(viewModel: ChatViewModel, coroutineScope: CoroutineScope) {
 }
 
 @Composable
-private fun Header(title: String, showReset: Boolean = false, onReset: () -> Unit = {}) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = title,
-            fontSize = 24.sp,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colors.primary
-        )
-        if (showReset) {
-            ResetButton(enabled = true, onClick = onReset)
-        }
-    }
-}
-
-@Composable
-private fun SystemPromptCard(
-    prompt: String,
-    scrollState: ScrollState,
-    modifier: Modifier = Modifier
+private fun CollapsiblePromptCard(
+    title: String,
+    isExpanded: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
 ) {
     Card(
         modifier = modifier.fillMaxWidth().padding(bottom = 8.dp),
         backgroundColor = MaterialTheme.colors.surface,
         shape = RoundedCornerShape(12.dp)
     ) {
-        Column(modifier = Modifier.padding(12.dp).verticalScroll(scrollState)) {
-            Text(
-                text = "Текст системного промта:",
-                fontSize = 11.sp,
-                color = Color.Gray,
-                fontWeight = FontWeight.Medium
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(text = prompt, fontSize = 12.sp, color = Color.White)
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth().clickable { onToggle() },
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = title,
+                    fontSize = 11.sp,
+                    color = Color.Gray,
+                    fontWeight = FontWeight.Medium
+                )
+                Icon(
+                    imageVector = Icons.Default.KeyboardArrowDown,
+                    contentDescription =
+                        if (isExpanded) "Свернуть" else "Развернуть",
+                    modifier = Modifier.rotate(if (isExpanded) 180f else 0f),
+                    tint = MaterialTheme.colors.secondary
+                )
+            }
+
+            AnimatedVisibility(
+                visible = isExpanded,
+                enter = expandVertically(expandFrom = Alignment.Top),
+                exit = shrinkVertically(shrinkTowards = Alignment.Top)
+            ) {
+                Column {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    content()
+                }
+            }
         }
+    }
+}
+
+@Composable
+private fun CustomPromptContent(
+    customText: String,
+    onCustomTextChanged: (String) -> Unit,
+    enabled: Boolean,
+    onOptimizeClick: () -> Unit,
+    isOptimizing: Boolean,
+    optimizedPrompt: String?,
+    hasOptimizedPrompt: Boolean,
+    onUseOriginalClick: () -> Unit,
+    optimizeError: String?
+) {
+    Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+    ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (hasOptimizedPrompt) {
+                        TextButton(
+                            onClick = onUseOriginalClick,
+                            enabled = enabled,
+                            contentPadding =
+                                PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "Восстановить оригинал",
+                                tint = MaterialTheme.colors.secondary,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Оригинал",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colors.secondary
+                            )
+                        }
+                    }
+                    Button(
+                        onClick = onOptimizeClick,
+                        enabled = enabled && customText.isNotBlank() && !isOptimizing,
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        colors =
+                            ButtonDefaults.buttonColors(
+                                backgroundColor = MaterialTheme.colors.primary,
+                                disabledBackgroundColor =
+                                    Color.Gray.copy(alpha = 0.3f)
+                            ),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        if (isOptimizing) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(14.dp),
+                                strokeWidth = 2.dp,
+                                color = Color.White
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.Build,
+                                contentDescription = "Оптимизировать",
+                                tint = Color.White,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text =
+                                if (isOptimizing) "Оптимизация..."
+                                else "Оптимизировать через LLM",
+                            fontSize = 11.sp,
+                            color = Color.White
+                        )
+                    }
+                }
+    }
+
+    Spacer(modifier = Modifier.height(8.dp))
+
+    if (hasOptimizedPrompt) {
+                Text(text = optimizedPrompt ?: "", fontSize = 12.sp, color = Color.White)
+    } else {
+                CustomPromptInputField(
+                    value = customText,
+                    onValueChange = onCustomTextChanged,
+                    enabled = enabled,
+                    modifier = Modifier.fillMaxWidth()
+                )
+    }
+
+    optimizeError?.let { error ->
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(text = error, fontSize = 11.sp, color = Color(0xFFFF6B6B))
     }
 }
 
@@ -262,13 +430,11 @@ private fun InputRow(
         ChatInputField(
             value = inputText,
             onValueChange = onInputTextChanged,
-            // UX: можно печатать следующее сообщение, пока запрос выполняется
             enabled = true,
             modifier = Modifier.weight(1f)
         )
 
         SendButton(
-            // Отправку блокируем на время выполнения запроса, чтобы избежать дублей
             enabled = inputText.isNotBlank() && !isLoading,
             isLoading = isLoading,
             onClick = onSendClick
@@ -277,117 +443,29 @@ private fun InputRow(
 }
 
 @Composable
-private fun StatusText(message: String, isError: Boolean) {
-    Text(text = message, fontSize = 12.sp, color = if (isError) Color(0xFFFF6B6B) else Color.Gray)
+private fun Header(title: String, showReset: Boolean = false, onReset: () -> Unit = {}) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = title,
+            fontSize = 24.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colors.primary
+        )
+        if (showReset) {
+            ResetButton(enabled = true, onClick = onReset)
+        }
+    }
 }
 
 @Composable
-private fun CustomPromptInputSection(
-    customText: String,
-    onCustomTextChanged: (String) -> Unit,
-    enabled: Boolean,
-    onOptimizeClick: () -> Unit,
-    isOptimizing: Boolean,
-    optimizedPrompt: String?,
-    hasOptimizedPrompt: Boolean,
-    onUseOriginalClick: () -> Unit,
-    optimizeError: String?,
-    modifier: Modifier = Modifier
-) {
-    Card(
-        modifier = modifier.fillMaxWidth().padding(bottom = 8.dp),
-        backgroundColor = MaterialTheme.colors.surface,
-        shape = RoundedCornerShape(12.dp)
-    ) {
-        Column(modifier = Modifier.padding(12.dp).verticalScroll(rememberScrollState())) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text =
-                        if (hasOptimizedPrompt) "Оптимизированный промпт:"
-                        else "Ваш системный промпт:",
-                    fontSize = 11.sp,
-                    color = Color.Gray,
-                    fontWeight = FontWeight.Medium
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (hasOptimizedPrompt) {
-                        TextButton(
-                            onClick = onUseOriginalClick,
-                            enabled = enabled,
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Refresh,
-                                contentDescription = "Восстановить оригинал",
-                                tint = MaterialTheme.colors.secondary,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "Оригинал",
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colors.secondary
-                            )
-                        }
-                    }
-                    Button(
-                        onClick = onOptimizeClick,
-                        enabled = enabled && customText.isNotBlank() && !isOptimizing,
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                        colors =
-                            ButtonDefaults.buttonColors(
-                                backgroundColor = MaterialTheme.colors.primary,
-                                disabledBackgroundColor = Color.Gray.copy(alpha = 0.3f)
-                            ),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        if (isOptimizing) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(14.dp),
-                                strokeWidth = 2.dp,
-                                color = Color.White
-                            )
-                        } else {
-                            Icon(
-                                imageVector = Icons.Default.Build,
-                                contentDescription = "Оптимизировать",
-                                tint = Color.White,
-                                modifier = Modifier.size(14.dp)
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text =
-                                if (isOptimizing) "Оптимизация..."
-                                else "Оптимизировать через LLM",
-                            fontSize = 11.sp,
-                            color = Color.White
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            if (hasOptimizedPrompt) {
-                Text(text = optimizedPrompt ?: "", fontSize = 12.sp, color = Color.White)
-            } else {
-                CustomPromptInputField(
-                    value = customText,
-                    onValueChange = onCustomTextChanged,
-                    enabled = enabled,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-
-            optimizeError?.let { error ->
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(text = error, fontSize = 11.sp, color = Color(0xFFFF6B6B))
-            }
-        }
-    }
+private fun StatusText(message: String, isError: Boolean) {
+    Text(
+        text = message,
+        fontSize = 12.sp,
+        color = if (isError) Color(0xFFFF6B6B) else Color.Gray
+    )
 }

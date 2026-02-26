@@ -26,4 +26,6 @@ interface ChatAgent {
     fun isApproachingContextLimit(sessionId: String, model: String, threshold: Float = 0.8f): Boolean
 
     fun truncateHistory(sessionId: String, keepLast: Int = 10)
+
+    fun removeOldestMessages(sessionId: String, count: Int): List<Message>
 }

@@ -7,13 +7,18 @@ import io.ktor.serialization.kotlinx.json.*
 import kotlinx.serialization.json.Json
 import org.bothubclient.application.usecase.*
 import org.bothubclient.domain.agent.ChatAgent
+import org.bothubclient.domain.context.SummaryStorage
 import org.bothubclient.domain.repository.ApiKeyProvider
 import org.bothubclient.domain.repository.ChatHistoryStorage
 import org.bothubclient.domain.repository.ChatRepository
 import org.bothubclient.infrastructure.agent.AgentBackedChatRepository
 import org.bothubclient.infrastructure.agent.BothubChatAgent
+import org.bothubclient.infrastructure.agent.CompressingChatAgent
 import org.bothubclient.infrastructure.api.BothubChatRepository
 import org.bothubclient.infrastructure.config.EnvironmentApiKeyProvider
+import org.bothubclient.infrastructure.context.ConcurrentSummaryStorage
+import org.bothubclient.infrastructure.context.DefaultContextComposer
+import org.bothubclient.infrastructure.context.LlmSummaryGenerator
 import org.bothubclient.infrastructure.persistence.FileChatHistoryStorage
 
 object ServiceLocator {
@@ -38,9 +43,36 @@ object ServiceLocator {
         BothubChatRepository(httpClient) { apiKeyProvider.getApiKey() }
     }
 
-    private val chatAgent: ChatAgent by lazy {
+    private val baseChatAgent: ChatAgent by lazy {
         BothubChatAgent(client = httpClient, getApiKey = { apiKeyProvider.getApiKey() })
     }
+
+    private val summaryStorage: SummaryStorage by lazy { ConcurrentSummaryStorage() }
+
+    private val summaryGenerator: LlmSummaryGenerator by lazy {
+        LlmSummaryGenerator(
+            client = httpClient,
+            getApiKey = { apiKeyProvider.getApiKey() }
+        )
+    }
+
+    private val contextComposer: DefaultContextComposer by lazy {
+        DefaultContextComposer(
+            chatAgent = baseChatAgent,
+            summaryStorage = summaryStorage
+        )
+    }
+
+    val compressingChatAgent: CompressingChatAgent by lazy {
+        CompressingChatAgent(
+            delegate = baseChatAgent,
+            summaryGenerator = summaryGenerator,
+            summaryStorage = summaryStorage,
+            contextComposer = contextComposer
+        )
+    }
+
+    private val chatAgent: ChatAgent by lazy { compressingChatAgent }
 
     private val chatRepository: ChatRepository by lazy {
         AgentBackedChatRepository(agent = chatAgent, sessionId = "chat-ui")

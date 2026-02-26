@@ -15,6 +15,7 @@ import org.bothubclient.infrastructure.api.ApiChatMessage
 import org.bothubclient.infrastructure.api.ApiChatRequest
 import org.bothubclient.infrastructure.api.ApiChatResponse
 import org.bothubclient.infrastructure.logging.AppLogger
+import org.bothubclient.infrastructure.logging.FileLogger
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.system.measureTimeMillis
@@ -167,6 +168,32 @@ class BothubChatAgent(
         }
     }
 
+    override fun removeOldestMessages(sessionId: String, count: Int): List<Message> {
+        val history = historyBySessionId[sessionId] ?: return emptyList()
+        val removed = mutableListOf<Message>()
+
+        synchronized(history) {
+            repeat(count) {
+                if (history.isNotEmpty()) {
+                    removed.add(history.removeAt(0))
+                }
+            }
+        }
+
+        if (removed.isNotEmpty()) {
+            val originalSize = history.size + removed.size
+            val factor = if (originalSize > 0) history.size.toFloat() / originalSize else 0f
+            sessionTokenAccumulator[sessionId]?.reduceProportionally(factor)
+
+            AppLogger.i(
+                TAG,
+                "Removed ${removed.size} oldest messages from session $sessionId, token stats reduced by ${(1 - factor) * 100}%"
+            )
+        }
+
+        return removed
+    }
+
     override suspend fun send(
         sessionId: String,
         userMessage: String,
@@ -206,6 +233,16 @@ class BothubChatAgent(
                 max_tokens = ApiConfig.DEFAULT_MAX_TOKENS,
                 temperature = temperature
             )
+
+            FileLogger.section("API REQUEST")
+            FileLogger.log(TAG, "Messages count: ${apiMessages.size}")
+            apiMessages.forEachIndexed { index, msg ->
+                val preview = if (msg.content.length > 100) msg.content.take(100) + "..." else msg.content
+                FileLogger.log(TAG, "  [$index] ${msg.role}: $preview")
+            }
+            if (apiMessages.any { it.role == "system" && it.content.contains("ПРЕДЫДУЩИЙ КОНТЕКСТ") }) {
+                FileLogger.log(TAG, "*** CONTEXT SUMMARY IS INCLUDED IN SYSTEM PROMPT ***")
+            }
 
             var responseTimeMs = 0L
             val chatResponse: ApiChatResponse
