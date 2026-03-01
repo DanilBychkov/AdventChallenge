@@ -20,6 +20,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CoroutineScope
+import org.bothubclient.domain.entity.ContextStrategy
 import org.bothubclient.domain.entity.Message
 import org.bothubclient.infrastructure.config.PanelSizePreferences
 import org.bothubclient.presentation.ui.components.*
@@ -33,12 +34,11 @@ fun ChatScreen(viewModel: ChatViewModel, coroutineScope: CoroutineScope) {
     val scrollState = rememberScrollState()
     val promptScrollState = rememberScrollState()
 
-    var promptPanelHeight by remember {
-        mutableStateOf(PanelSizePreferences.promptPanelHeight.dp)
-    }
+    var promptPanelHeight by remember { mutableStateOf(PanelSizePreferences.promptPanelHeight.dp) }
 
     var isStatsExpanded by remember { mutableStateOf(true) }
     var isPromptExpanded by remember { mutableStateOf(true) }
+    var isContextMessagesExpanded by remember { mutableStateOf(true) }
 
     val minPromptHeight = 120.dp
     val maxPromptHeight = 400.dp
@@ -83,10 +83,8 @@ fun ChatScreen(viewModel: ChatViewModel, coroutineScope: CoroutineScope) {
                     colors =
                         TextFieldDefaults.outlinedTextFieldColors(
                             textColor = Color.White,
-                            backgroundColor =
-                                MaterialTheme.colors.surface,
-                            focusedBorderColor =
-                                MaterialTheme.colors.primary,
+                            backgroundColor = MaterialTheme.colors.surface,
+                            focusedBorderColor = MaterialTheme.colors.primary,
                             unfocusedBorderColor = Color.Gray
                         ),
                     shape = RoundedCornerShape(12.dp),
@@ -94,11 +92,7 @@ fun ChatScreen(viewModel: ChatViewModel, coroutineScope: CoroutineScope) {
                 )
                 viewModel.temperatureError?.let { error ->
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = error,
-                        fontSize = 12.sp,
-                        color = Color(0xFFFF6B6B)
-                    )
+                    Text(text = error, fontSize = 12.sp, color = Color(0xFFFF6B6B))
                 }
             }
 
@@ -118,8 +112,7 @@ fun ChatScreen(viewModel: ChatViewModel, coroutineScope: CoroutineScope) {
             if (viewModel.selectedPrompt.isCustom) {
                 CollapsiblePromptCard(
                     title =
-                        if (viewModel.hasOptimizedPrompt)
-                            "Оптимизированный промпт"
+                        if (viewModel.hasOptimizedPrompt) "Оптимизированный промпт"
                         else "Ваш системный промпт",
                     isExpanded = isPromptExpanded,
                     onToggle = { isPromptExpanded = !isPromptExpanded },
@@ -127,21 +120,14 @@ fun ChatScreen(viewModel: ChatViewModel, coroutineScope: CoroutineScope) {
                 ) {
                     CustomPromptContent(
                         customText = viewModel.customPromptText,
-                        onCustomTextChanged = {
-                            viewModel.onCustomPromptTextChanged(it)
-                        },
+                        onCustomTextChanged = { viewModel.onCustomPromptTextChanged(it) },
                         enabled = canChangePrompt,
-                        onOptimizeClick = {
-                            viewModel.optimizeCustomPrompt(
-                                coroutineScope
-                            )
-                        },
+                        onOptimizeClick = { viewModel.optimizeCustomPrompt(coroutineScope) },
                         isOptimizing = viewModel.isOptimizingPrompt,
+                        scrollState = promptScrollState,
                         optimizedPrompt = viewModel.optimizedPromptText,
                         hasOptimizedPrompt = viewModel.hasOptimizedPrompt,
-                        onUseOriginalClick = {
-                            viewModel.useOriginalPrompt()
-                        },
+                        onUseOriginalClick = { viewModel.useOriginalPrompt() },
                         optimizeError = viewModel.optimizePromptError
                     )
                 }
@@ -152,10 +138,7 @@ fun ChatScreen(viewModel: ChatViewModel, coroutineScope: CoroutineScope) {
                     onToggle = { isPromptExpanded = !isPromptExpanded },
                     modifier = Modifier.height(promptPanelHeight)
                 ) {
-                    Column(
-                        modifier =
-                            Modifier.verticalScroll(promptScrollState)
-                    ) {
+                    Column(modifier = Modifier.verticalScroll(promptScrollState)) {
                         Text(
                             text = viewModel.selectedPrompt.text,
                             fontSize = 12.sp,
@@ -168,10 +151,8 @@ fun ChatScreen(viewModel: ChatViewModel, coroutineScope: CoroutineScope) {
             ResizableDivider(
                 onDrag = { delta ->
                     val newHeight = promptPanelHeight + delta.dp
-                    promptPanelHeight =
-                        newHeight.coerceIn(minPromptHeight, maxPromptHeight)
-                    PanelSizePreferences.promptPanelHeight =
-                        promptPanelHeight.value.toInt()
+                    promptPanelHeight = newHeight.coerceIn(minPromptHeight, maxPromptHeight)
+                    PanelSizePreferences.promptPanelHeight = promptPanelHeight.value.toInt()
                 }
             )
 
@@ -198,15 +179,36 @@ fun ChatScreen(viewModel: ChatViewModel, coroutineScope: CoroutineScope) {
                     config = viewModel.contextConfig,
                     isExpanded = viewModel.isContextConfigExpanded,
                     onToggle = { viewModel.toggleContextConfigExpanded() },
+                    onStrategyChanged = { viewModel.onStrategySelected(it) },
+                    facts = viewModel.facts,
+                    branches = viewModel.branches,
+                    activeBranchId = viewModel.activeBranchId,
+                    checkpointSize = viewModel.branchCheckpointSize,
+                    maxCheckpointSize = viewModel.messages.size,
+                    onCheckpointSizeChanged = { viewModel.onBranchCheckpointSizeChanged(it) },
+                    onBranchSelected = { branchId ->
+                        viewModel.onBranchSelected(coroutineScope, branchId)
+                    },
+                    onCreateBranchFromCheckpoint = {
+                        viewModel.createBranchFromCheckpoint(coroutineScope)
+                    },
                     onKeepLastNChanged = { viewModel.onKeepLastNChanged(it) },
                     onCompressionBlockSizeChanged = {
                         viewModel.onCompressionBlockSizeChanged(it)
                     },
-                    onAutoCompressionToggled = {
-                        viewModel.onAutoCompressionToggled(it)
-                    },
+                    onAutoCompressionToggled = { viewModel.onAutoCompressionToggled(it) },
                     enabled = !viewModel.isLoading
                 )
+
+                if (viewModel.contextConfig.strategy == ContextStrategy.SLIDING_WINDOW) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    ContextMessagesPanel(
+                        messages = viewModel.contextMessages,
+                        keepLastN = viewModel.contextConfig.keepLastN,
+                        isExpanded = isContextMessagesExpanded,
+                        onToggle = { isContextMessagesExpanded = !isContextMessagesExpanded }
+                    )
+                }
             }
 
             MessagesContainer(
@@ -261,8 +263,7 @@ private fun CollapsiblePromptCard(
                 )
                 Icon(
                     imageVector = Icons.Default.KeyboardArrowDown,
-                    contentDescription =
-                        if (isExpanded) "Свернуть" else "Развернуть",
+                    contentDescription = if (isExpanded) "Свернуть" else "Развернуть",
                     modifier = Modifier.rotate(if (isExpanded) 180f else 0f),
                     tint = MaterialTheme.colors.secondary
                 )
@@ -289,92 +290,93 @@ private fun CustomPromptContent(
     enabled: Boolean,
     onOptimizeClick: () -> Unit,
     isOptimizing: Boolean,
+    scrollState: ScrollState,
     optimizedPrompt: String?,
     hasOptimizedPrompt: Boolean,
     onUseOriginalClick: () -> Unit,
     optimizeError: String?
 ) {
-    Row(
+    Column(modifier = Modifier.fillMaxWidth().verticalScroll(scrollState)) {
+        Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
-    ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (hasOptimizedPrompt) {
-                        TextButton(
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (hasOptimizedPrompt) {
+                    TextButton(
                             onClick = onUseOriginalClick,
                             enabled = enabled,
-                            contentPadding =
-                                PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                        ) {
-                            Icon(
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Icon(
                                 imageVector = Icons.Default.Refresh,
                                 contentDescription = "Восстановить оригинал",
                                 tint = MaterialTheme.colors.secondary,
                                 modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
                                 text = "Оригинал",
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colors.secondary
-                            )
-                        }
+                        )
                     }
-                    Button(
+                }
+                Button(
                         onClick = onOptimizeClick,
                         enabled = enabled && customText.isNotBlank() && !isOptimizing,
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                         colors =
                             ButtonDefaults.buttonColors(
                                 backgroundColor = MaterialTheme.colors.primary,
-                                disabledBackgroundColor =
-                                    Color.Gray.copy(alpha = 0.3f)
+                                disabledBackgroundColor = Color.Gray.copy(alpha = 0.3f)
                             ),
                         shape = RoundedCornerShape(8.dp)
-                    ) {
-                        if (isOptimizing) {
-                            CircularProgressIndicator(
+                ) {
+                    if (isOptimizing) {
+                        CircularProgressIndicator(
                                 modifier = Modifier.size(14.dp),
                                 strokeWidth = 2.dp,
                                 color = Color.White
-                            )
-                        } else {
-                            Icon(
+                        )
+                    } else {
+                        Icon(
                                 imageVector = Icons.Default.Build,
                                 contentDescription = "Оптимизировать",
                                 tint = Color.White,
                                 modifier = Modifier.size(14.dp)
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
                             text =
                                 if (isOptimizing) "Оптимизация..."
                                 else "Оптимизировать через LLM",
                             fontSize = 11.sp,
                             color = Color.White
-                        )
-                    }
+                    )
                 }
-    }
+            }
+        }
 
-    Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
-    if (hasOptimizedPrompt) {
-                Text(text = optimizedPrompt ?: "", fontSize = 12.sp, color = Color.White)
-    } else {
-                CustomPromptInputField(
+        if (hasOptimizedPrompt) {
+            Text(text = optimizedPrompt ?: "", fontSize = 12.sp, color = Color.White)
+        } else {
+            CustomPromptInputField(
                     value = customText,
                     onValueChange = onCustomTextChanged,
                     enabled = enabled,
                     modifier = Modifier.fillMaxWidth()
-                )
-    }
+            )
+        }
 
-    optimizeError?.let { error ->
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(text = error, fontSize = 11.sp, color = Color(0xFFFF6B6B))
+        optimizeError?.let { error ->
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(text = error, fontSize = 11.sp, color = Color(0xFFFF6B6B))
+        }
     }
 }
 
@@ -463,9 +465,5 @@ private fun Header(title: String, showReset: Boolean = false, onReset: () -> Uni
 
 @Composable
 private fun StatusText(message: String, isError: Boolean) {
-    Text(
-        text = message,
-        fontSize = 12.sp,
-        color = if (isError) Color(0xFFFF6B6B) else Color.Gray
-    )
+    Text(text = message, fontSize = 12.sp, color = if (isError) Color(0xFFFF6B6B) else Color.Gray)
 }

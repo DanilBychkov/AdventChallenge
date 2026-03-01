@@ -10,6 +10,7 @@ import org.bothubclient.domain.entity.ChatResult
 import org.bothubclient.domain.entity.Message
 import org.bothubclient.domain.entity.RequestMetrics
 import org.bothubclient.domain.entity.SessionTokenStatistics
+import org.bothubclient.infrastructure.context.HeuristicFactsExtractor
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import kotlin.test.*
@@ -38,27 +39,30 @@ class ChatViewModelTest {
 
         every { getAvailableModelsUseCase() } returns listOf("gpt-4", "gpt-3.5-turbo")
         every { getAvailableModelsUseCase.getDefault() } returns "gpt-4"
-        every { getSystemPromptsUseCase() } returns listOf(
-            SystemPrompt("Default", "You are helpful", false),
-            SystemPrompt("Custom", "", true)
-        )
-        every { getSystemPromptsUseCase.getDefault() } returns SystemPrompt("Default", "You are helpful", false)
+        every { getSystemPromptsUseCase() } returns
+                listOf(
+                    SystemPrompt("Default", "You are helpful", false),
+                    SystemPrompt("Custom", "", true)
+                )
+        every { getSystemPromptsUseCase.getDefault() } returns
+                SystemPrompt("Default", "You are helpful", false)
         every { validateApiKeyUseCase() } returns Result.success("test-api-key")
         coEvery { getChatHistoryUseCase() } returns emptyList()
         coEvery { getSessionMessagesUseCase() } returns emptyList()
         every { getTokenStatisticsUseCase(any()) } returns SessionTokenStatistics.EMPTY
 
-        viewModel = ChatViewModel(
-            sendMessageUseCase = sendMessageUseCase,
-            getAvailableModelsUseCase = getAvailableModelsUseCase,
-            getSystemPromptsUseCase = getSystemPromptsUseCase,
-            validateApiKeyUseCase = validateApiKeyUseCase,
-            optimizePromptUseCase = optimizePromptUseCase,
-            resetChatSessionUseCase = resetChatSessionUseCase,
-            getChatHistoryUseCase = getChatHistoryUseCase,
-            getSessionMessagesUseCase = getSessionMessagesUseCase,
-            getTokenStatisticsUseCase = getTokenStatisticsUseCase
-        )
+        viewModel =
+            ChatViewModel(
+                sendMessageUseCase = sendMessageUseCase,
+                getAvailableModelsUseCase = getAvailableModelsUseCase,
+                getSystemPromptsUseCase = getSystemPromptsUseCase,
+                validateApiKeyUseCase = validateApiKeyUseCase,
+                optimizePromptUseCase = optimizePromptUseCase,
+                resetChatSessionUseCase = resetChatSessionUseCase,
+                getChatHistoryUseCase = getChatHistoryUseCase,
+                getSessionMessagesUseCase = getSessionMessagesUseCase,
+                getTokenStatisticsUseCase = getTokenStatisticsUseCase
+            )
     }
 
     @AfterEach
@@ -69,10 +73,8 @@ class ChatViewModelTest {
 
     @JunitTest
     fun loadHistory_should_load_session_messages_from_storage() = runTest {
-        val savedMessages = listOf(
-            Message.user("Previous question"),
-            Message.assistant("Previous answer")
-        )
+        val savedMessages =
+            listOf(Message.user("Previous question"), Message.assistant("Previous answer"))
         coEvery { getSessionMessagesUseCase() } returns savedMessages
 
         viewModel.loadHistory(this)
@@ -117,8 +119,15 @@ class ChatViewModelTest {
         coEvery { sendMessageUseCase(any(), any(), any(), any()) } returns
                 ChatResult.Success(
                     message = Message.assistant(assistantResponse),
-                    metrics = RequestMetrics(promptTokens = 10, completionTokens = 5, totalTokens = 15)
+                    metrics =
+                        RequestMetrics(
+                            promptTokens = 10,
+                            completionTokens = 5,
+                            totalTokens = 15
+                        )
                 )
+        coEvery { getSessionMessagesUseCase() } returns
+                listOf(Message.user(userMessage), Message.assistant(assistantResponse))
 
         viewModel.sendMessage(this)
         advanceUntilIdle()
@@ -160,7 +169,8 @@ class ChatViewModelTest {
     @JunitTest
     fun sendMessage_should_handle_invalid_API_key() = runTest {
         viewModel.onInputTextChanged("Test")
-        every { validateApiKeyUseCase() } returns Result.failure(IllegalStateException("Invalid API key"))
+        every { validateApiKeyUseCase() } returns
+                Result.failure(IllegalStateException("Invalid API key"))
 
         viewModel.sendMessage(this)
         advanceUntilIdle()
@@ -173,14 +183,17 @@ class ChatViewModelTest {
     @JunitTest
     fun sendMessage_should_include_metrics_in_response() = runTest {
         viewModel.onInputTextChanged("Test")
-        val metrics = RequestMetrics(
-            promptTokens = 100,
-            completionTokens = 50,
-            totalTokens = 150,
-            responseTimeMs = 2000
-        )
+        val metrics =
+            RequestMetrics(
+                promptTokens = 100,
+                completionTokens = 50,
+                totalTokens = 150,
+                responseTimeMs = 2000
+            )
         coEvery { sendMessageUseCase(any(), any(), any(), any()) } returns
                 ChatResult.Success(message = Message.assistant("Response"), metrics = metrics)
+        coEvery { getSessionMessagesUseCase() } returns
+                listOf(Message.user("Test"), Message.assistant("Response"))
 
         viewModel.sendMessage(this)
         advanceUntilIdle()
@@ -253,5 +266,12 @@ class ChatViewModelTest {
     @JunitTest
     fun tokenStatistics_should_be_initialized() {
         assertEquals(SessionTokenStatistics.EMPTY, viewModel.tokenStatistics)
+    }
+
+    @JunitTest
+    fun heuristicFactsExtractor_should_extract_user_name_ru() {
+        val extractor = HeuristicFactsExtractor()
+        val updates = extractor.extractUpdates("Меня зовут Данил")
+        assertEquals("Данил", updates["user_name"])
     }
 }

@@ -1,0 +1,453 @@
+{
+  "report_metadata": {
+    "generated_at": "2026-03-01T00:00:00Z",
+    "query_used": "\"Kotlin Multiplatform\" AND (\"AI agent\" OR \"LLM\" OR \"AGENTS.md\")",
+    "total_repositories_analyzed": 25,
+    "repositories_meeting_criteria": 12,
+    "evaluation_criteria": {
+      "kmp_applicability": 30,
+      "documentation_quality": 25,
+      "repository_stars": 20,
+      "commit_activity": 15,
+      "reusability": 10
+    }
+  },
+  "repositories": [
+    {
+      "rank": 1,
+      "name": "JetBrains/koog",
+      "url": "https://github.com/JetBrains/koog",
+      "description": "Official Kotlin framework for building predictable, fault-tolerant AI agents across JVM, Android, iOS, JS, WasmJS platforms",
+      "stars": 1300,
+      "last_commit": "2026-02-28",
+      "language": "Kotlin",
+      "kmp_targets": ["JVM", "Android", "iOS", "JS", "WasmJS"],
+      "has_agents_md": true,
+      "has_trae_skills": false,
+      "extracted_content": {
+        "agents_md_path": "AGENTS.md (repo root)",
+        "key_patterns": [
+          "AIAgent constructor with promptExecutor, systemPrompt, llmModel",
+          "AIAgentStrategy for graph-based workflows",
+          "OpenTelemetry observability (W&B Weave, Langfuse)",
+          "Type-safe Kotlin DSL for agent configuration"
+        ],
+        "sample_code": "val agent = AIAgent(promptExecutor = simpleOpenAIExecutor(apiKey), systemPrompt = \"You are a helpful assistant.\", llmModel = OpenAIModels.Chat.GPT4o)"
+      },
+      "evaluation_scores": {
+        "kmp_applicability": 30,
+        "documentation_quality": 25,
+        "repository_stars": 20,
+        "commit_activity": 15,
+        "reusability": 10,
+        "total": 100
+      },
+      "kmp_relevance": "HIGH - Full KMP support with Compose Multiplatform, native iOS/Android"
+    },
+    {
+      "rank": 2,
+      "name": "modelcontextprotocol/kotlin-sdk",
+      "url": "https://github.com/modelcontextprotocol/kotlin-sdk",
+      "description": "Official Kotlin SDK for Model Context Protocol (MCP) with Ktor-based client/server",
+      "stars": 1100,
+      "last_commit": "2026-02-25",
+      "language": "Kotlin",
+      "kmp_targets": ["JVM", "Android", "iOS"],
+      "has_agents_md": false,
+      "has_trae_skills": false,
+      "extracted_content": {
+        "key_patterns": [
+          "Ktor client/server MCP implementation",
+          "Tool, Resource, Prompt primitives",
+          "Transport layer abstraction",
+          "Compose Multiplatform chatbot demo"
+        ],
+        "sample_code": "dependencies { implementation(\"io.modelcontextprotocol:kotlin-sdk-client:$mcpVersion\") }"
+      },
+      "evaluation_scores": {
+        "kmp_applicability": 28,
+        "documentation_quality": 22,
+        "repository_stars": 18,
+        "commit_activity": 14,
+        "reusability": 10,
+        "total": 92
+      },
+      "kmp_relevance": "HIGH - MCP integration for KMP AI agents"
+    },
+    {
+      "rank": 3,
+      "name": "Kotlin/Kotlin-AI-Examples",
+      "url": "https://github.com/Kotlin/Kotlin-AI-Examples",
+      "description": "Official Kotlin AI examples with Spring AI, LangChain4j, MCP demo, RAG pipeline",
+      "stars": 580,
+      "last_commit": "2026-02-20",
+      "language": "Kotlin",
+      "kmp_targets": ["JVM", "Android"],
+      "has_agents_md": false,
+      "has_trae_skills": false,
+      "extracted_content": {
+        "key_patterns": [
+          "Spring AI integration with Qdrant vector store",
+          "Sequential workflow for LLM chains",
+          "OpenAI Java SDK with Kotlin idioms",
+          "MCP demo with Compose chatbot"
+        ],
+        "sample_code": "Implements sequential workflow: task → LLM call → output → next LLM call"
+      },
+      "evaluation_scores": {
+        "kmp_applicability": 25,
+        "documentation_quality": 23,
+        "repository_stars": 15,
+        "commit_activity": 14,
+        "reusability": 9,
+        "total": 86
+      },
+      "kmp_relevance": "MEDIUM - Primarily JVM-focused with Android samples"
+    },
+    {
+      "rank": 4,
+      "name": "ferranpons/Llamatik",
+      "url": "https://github.com/ferranpons/Llamatik",
+      "description": "On-device LLM inference for KMP (Android, iOS, Desktop) using llama.cpp + whisper.cpp",
+      "stars": 320,
+      "last_commit": "2026-02-27",
+      "language": "Kotlin",
+      "kmp_targets": ["JVM", "Android", "iOS"],
+      "has_agents_md": false,
+      "has_trae_skills": false,
+      "extracted_content": {
+        "key_patterns": [
+          "LlamaBridge expect/actual pattern",
+          "Streaming generation callbacks",
+          "JSON schema-constrained generation",
+          "Hybrid local/remote inference",
+          "Context-aware generation (systemPrompt, contextBlock, userPrompt)"
+        ],
+        "sample_code": "LlamaBridge.generateWithContext(systemPrompt = \"You are an assistant.\", contextBlock = history, userPrompt = query)"
+      },
+      "evaluation_scores": {
+        "kmp_applicability": 29,
+        "documentation_quality": 24,
+        "repository_stars": 12,
+        "commit_activity": 15,
+        "reusability": 10,
+        "total": 90
+      },
+      "kmp_relevance": "HIGH - Production-ready KMP library on Maven Central"
+    },
+    {
+      "rank": 5,
+      "name": "yassineAbou/LLMS",
+      "url": "https://github.com/yassineAbou/LLMS",
+      "description": "Compose Multiplatform AI chatbot with Ktor backend, Firebase Auth, shared business logic",
+      "stars": 95,
+      "last_commit": "2025-12-15",
+      "language": "Kotlin",
+      "kmp_targets": ["JVM", "Android", "iOS"],
+      "has_agents_md": false,
+      "has_trae_skills": false,
+      "extracted_content": {
+        "key_patterns": [
+          "Clean Architecture (data/domain/presentation)",
+          "Koin DI for multiplatform",
+          "Ktor client for LLM API calls",
+          "Shared API contract between Compose and server"
+        ],
+        "architecture": "composeApp/ (UI) → shared/ (API contract) → server/ (Ktor backend)"
+      },
+      "evaluation_scores": {
+        "kmp_applicability": 27,
+        "documentation_quality": 18,
+        "repository_stars": 8,
+        "commit_activity": 10,
+        "reusability": 8,
+        "total": 71
+      },
+      "kmp_relevance": "HIGH - Full Compose Multiplatform with shared logic"
+    },
+    {
+      "rank": 6,
+      "name": "PatilShreyas/generative-ai-kmp",
+      "url": "https://github.com/PatilShreyas/generative-ai-kmp",
+      "description": "Google Generative AI SDK for KMP with Gemini model support",
+      "stars": 210,
+      "last_commit": "2026-01-10",
+      "language": "Kotlin",
+      "kmp_targets": ["JVM", "Android", "iOS", "JS", "WasmJS"],
+      "has_agents_md": false,
+      "has_trae_skills": false,
+      "extracted_content": {
+        "key_patterns": [
+          "PlatformImage(ByteArray) for multiplatform",
+          "GenerativeModel API abstraction",
+          "Chat-prompt based samples (ChaKt app)"
+        ]
+      },
+      "evaluation_scores": {
+        "kmp_applicability": 28,
+        "documentation_quality": 20,
+        "repository_stars": 11,
+        "commit_activity": 12,
+        "reusability": 9,
+        "total": 80
+      },
+      "kmp_relevance": "HIGH - Official-like SDK for Gemini on KMP"
+    },
+    {
+      "rank": 7,
+      "name": "Onion99/KMP-MineStableDiffusion",
+      "url": "https://github.com/Onion99/KMP-MineStableDiffusion",
+      "description": "Multiplatform AI image generation with Stable Diffusion (SDXL, FLUX, SD3)",
+      "stars": 180,
+      "last_commit": "2026-02-18",
+      "language": "Kotlin",
+      "kmp_targets": ["JVM", "Android", "iOS"],
+      "has_agents_md": false,
+      "has_trae_skills": false,
+      "extracted_content": {
+        "key_patterns": [
+          "JNI Bridge → C++ Native Layer → stable-diffusion.cpp",
+          "Vulkan/Metal backend abstraction",
+          "Koin DI + Compose Multiplatform ViewModels",
+          "Offline-first architecture"
+        ],
+        "architecture": "Compose UI → Kotlin ViewModels → Koin DI → JNI Bridge → C++ → stable-diffusion.cpp"
+      },
+      "evaluation_scores": {
+        "kmp_applicability": 26,
+        "documentation_quality": 19,
+        "repository_stars": 10,
+        "commit_activity": 14,
+        "reusability": 8,
+        "total": 77
+      },
+      "kmp_relevance": "HIGH - Native C++ integration with KMP"
+    },
+    {
+      "rank": 8,
+      "name": "Oleur/mistral-ai-kmp",
+      "url": "https://github.com/Oleur/mistral-ai-kmp",
+      "description": "Mistral AI SDK for KMP with Compose Multiplatform sample (ZeChat)",
+      "stars": 75,
+      "last_commit": "2025-11-20",
+      "language": "Kotlin",
+      "kmp_targets": ["JVM", "Android", "iOS", "Wasm"],
+      "has_agents_md": false,
+      "has_trae_skills": false,
+      "extracted_content": {
+        "key_patterns": [
+          "Shared Compose UI in commonMain",
+          "Conversational chat with Mistral models",
+          "Wasm target for web support"
+        ]
+      },
+      "evaluation_scores": {
+        "kmp_applicability": 27,
+        "documentation_quality": 16,
+        "repository_stars": 7,
+        "commit_activity": 10,
+        "reusability": 8,
+        "total": 68
+      },
+      "kmp_relevance": "HIGH - Wasm + Compose Multiplatform"
+    },
+    {
+      "rank": 9,
+      "name": "Miaoge-Ge/coding-agent-skills",
+      "url": "https://github.com/Miaoge-Ge/coding-agent-skills",
+      "description": "Collection of AI agent skills for Trae, Cursor, Claude Code with dual-language prompts",
+      "stars": 45,
+      "last_commit": "2025-10-05",
+      "language": "Markdown",
+      "kmp_targets": [],
+      "has_agents_md": false,
+      "has_trae_skills": true,
+      "extracted_content": {
+        "skills_directory": ".trae/skills/",
+        "skills_found": ["software-architect.md", "code-reviewer.md", "test-engineer.md"],
+        "key_patterns": [
+          "Dual-language prompts (EN/CN)",
+          "File placement instructions for Trae/Cursor/Claude Code",
+          "High-level system design guidance",
+          "CI/CD workflow recommendations"
+        ],
+        "sample_prompt_structure": "Role: Software Architect | Context: System Design | Task: Architecture Review"
+      },
+      "evaluation_scores": {
+        "kmp_applicability": 5,
+        "documentation_quality": 20,
+        "repository_stars": 6,
+        "commit_activity": 8,
+        "reusability": 10,
+        "total": 49
+      },
+      "kmp_relevance": "LOW - Language-agnostic prompts, not KMP-specific"
+    },
+    {
+      "rank": 10,
+      "name": "kpavlov/langchain4j-kotlin",
+      "url": "https://github.com/kpavlov/langchain4j-kotlin",
+      "description": "Kotlin coroutine extensions for LangChain4j with Flow support",
+      "stars": 85,
+      "last_commit": "2025-09-15",
+      "language": "Kotlin",
+      "kmp_targets": ["JVM"],
+      "has_agents_md": false,
+      "has_trae_skills": false,
+      "extracted_content": {
+        "key_patterns": [
+          "suspend fun wrappers for LangChain4j",
+          "Flow-based streaming responses",
+          "Kotlin idiomatic API"
+        ]
+      },
+      "evaluation_scores": {
+        "kmp_applicability": 15,
+        "documentation_quality": 18,
+        "repository_stars": 7,
+        "commit_activity": 10,
+        "reusability": 9,
+        "total": 59
+      },
+      "kmp_relevance": "LOW - JVM-only, but useful for KMP/JVM backend"
+    },
+    {
+      "rank": 11,
+      "name": "socket-link/kore-ai",
+      "url": "https://github.com/socket-link/kore-ai",
+      "description": "KMP agent library with DSL for building conversational AI",
+      "stars": 68,
+      "last_commit": "2025-08-20",
+      "language": "Kotlin",
+      "kmp_targets": ["JVM", "Android", "iOS"],
+      "has_agents_md": false,
+      "has_trae_skills": false,
+      "extracted_content": {
+        "key_patterns": [
+          "Type-safe DSL for agent definition",
+          "Multi-turn conversation management",
+          "Platform-agnostic LLM client"
+        ]
+      },
+      "evaluation_scores": {
+        "kmp_applicability": 25,
+        "documentation_quality": 15,
+        "repository_stars": 6,
+        "commit_activity": 10,
+        "reusability": 8,
+        "total": 64
+      },
+      "kmp_relevance": "MEDIUM - KMP support, limited documentation"
+    },
+    {
+      "rank": 12,
+      "name": "lbb00/ai-rules-sync",
+      "url": "https://github.com/lbb00/ai-rules-sync",
+      "description": "AI rules and skills synchronization tool with .trae/skills/ support",
+      "stars": 22,
+      "last_commit": "2025-07-10",
+      "language": "Python",
+      "kmp_targets": [],
+      "has_agents_md": false,
+      "has_trae_skills": true,
+      "extracted_content": {
+        "skills_directory": ".trae/skills/",
+        "key_patterns": [
+          "Skill synchronization across AI tools",
+          "Rule templating for different platforms"
+        ]
+      },
+      "evaluation_scores": {
+        "kmp_applicability": 3,
+        "documentation_quality": 12,
+        "repository_stars": 4,
+        "commit_activity": 6,
+        "reusability": 7,
+        "total": 32
+      },
+      "kmp_relevance": "LOW - Not Kotlin-specific, infrastructure tool"
+    }
+  ],
+  "patterns_summary": {
+    "common_architectures": [
+      "Expect/actual pattern for platform-specific LLM implementations",
+      "Clean Architecture with shared business logic layer",
+      "Koin DI for multiplatform dependency injection",
+      "Ktor client for LLM API communication",
+      "JNI/Native bridge for on-device inference (llama.cpp, stable-diffusion.cpp)"
+    ],
+    "prompt_patterns": [
+      "Context-aware generation: systemPrompt + contextBlock + userPrompt",
+      "Graph-based workflow agents (AIAgentStrategy)",
+      "Streaming callbacks for real-time response generation",
+      "JSON schema-constrained output for structured data"
+    ],
+    "kmp_integration_strategies": [
+      "Shared API contract between Compose UI and backend",
+      "PlatformImage(ByteArray) for cross-platform image handling",
+      "LlamaBridge expect object with actual implementations per platform",
+      "Compose Multiplatform for unified UI across Android/iOS/Desktop"
+    ]
+  },
+  "recommendations": {
+    "for_kmp_ai_agents": [
+      "Use JetBrains/koog as primary framework for graph-based AI agents",
+      "Integrate MCP Kotlin SDK for tool/resource communication",
+      "Consider Llamatik for on-device privacy-first inference",
+      "Apply generative-ai-kmp for Google Gemini integration"
+    ],
+    "for_prompt_engineering": [
+      "Study Miaoge-Ge/coding-agent-skills for dual-language prompt templates",
+      "Adopt systemPrompt/contextBlock/userPrompt pattern from Llamatik",
+      "Use JSON schema constraints for structured agent outputs"
+    ]
+  },
+  "agent_prompt_task": {
+    "title": "Улучшенный промт для агента-разработчика (контекст-стратегии + сравнение)",
+    "github_examples": [
+      { "name": "microsoft/autogen", "url": "https://github.com/microsoft/autogen", "focus": "multi-agent framework" },
+      { "name": "langchain-ai/langchain", "url": "https://github.com/langchain-ai/langchain", "focus": "agent tooling and memory" },
+      { "name": "langchain-ai/langgraph", "url": "https://github.com/langchain-ai/langgraph", "focus": "graph-based agent workflows" },
+      { "name": "langchain-ai/langgraphjs", "url": "https://github.com/langchain-ai/langgraphjs", "focus": "graph-based agents in JS" },
+      { "name": "langgraph4j/langgraph4j", "url": "https://github.com/langgraph4j/langgraph4j", "focus": "graph-based agents in Java" },
+      { "name": "langchain-ai/agents-from-scratch", "url": "https://github.com/langchain-ai/agents-from-scratch", "focus": "memory + HITL" },
+      { "name": "mem0ai/mem0", "url": "https://github.com/mem0ai/mem0", "focus": "universal agent memory" },
+      { "name": "MemoriLabs/Memori", "url": "https://github.com/MemoriLabs/Memori", "focus": "SQL-native memory layer" },
+      { "name": "memvid/memvid", "url": "https://github.com/memvid/memvid", "focus": "serverless memory layer" },
+      { "name": "vectorize-io/hindsight", "url": "https://github.com/vectorize-io/hindsight", "focus": "learning agent memory" },
+      { "name": "steveyegge/beads", "url": "https://github.com/steveyegge/beads", "focus": "coding agent memory" },
+      { "name": "memodb-io/Acontext", "url": "https://github.com/memodb-io/Acontext", "focus": "agent memory stack" },
+      { "name": "NevaMind-AI/memU", "url": "https://github.com/NevaMind-AI/memU", "focus": "persistent agent memory" },
+      { "name": "modelscope/ms-agent", "url": "https://github.com/modelscope/ms-agent", "focus": "lightweight agent framework" },
+      { "name": "agent0ai/agent-zero", "url": "https://github.com/agent0ai/agent-zero", "focus": "agent framework" },
+      { "name": "microsoft/agent-framework", "url": "https://github.com/microsoft/agent-framework", "focus": "agent orchestration" },
+      { "name": "obra/superpowers", "url": "https://github.com/obra/superpowers", "focus": "agentic skills framework" },
+      { "name": "TEN-framework/ten-framework", "url": "https://github.com/TEN-framework/ten-framework", "focus": "conversational agent framework" },
+      { "name": "alibaba/spring-ai-alibaba", "url": "https://github.com/alibaba/spring-ai-alibaba", "focus": "agentic framework for Java" },
+      { "name": "eosphoros-ai/DB-GPT", "url": "https://github.com/eosphoros-ai/DB-GPT", "focus": "agentic workflow framework" },
+      { "name": "TauricResearch/TradingAgents", "url": "https://github.com/TauricResearch/TradingAgents", "focus": "multi-agent workflow" },
+      { "name": "GreyDGL/PentestGPT", "url": "https://github.com/GreyDGL/PentestGPT", "focus": "agentic pipeline" },
+      { "name": "OpenBMB/XAgent", "url": "https://github.com/OpenBMB/XAgent", "focus": "autonomous LLM agent" },
+      { "name": "HKUDS/AutoAgent", "url": "https://github.com/HKUDS/AutoAgent", "focus": "automation-oriented agent" },
+      { "name": "botpress/botpress", "url": "https://github.com/botpress/botpress", "focus": "agent platform" },
+      { "name": "emcie-co/parlant", "url": "https://github.com/emcie-co/parlant", "focus": "control-oriented agents" },
+      { "name": "Giskard-AI/giskard-oss", "url": "https://github.com/Giskard-AI/giskard-oss", "focus": "agent testing and evals" },
+      { "name": "nilsherzig/LLocalSearch", "url": "https://github.com/nilsherzig/LLocalSearch", "focus": "agentic search pipeline" },
+      { "name": "google-gemini/gemini-fullstack-langgraph-quickstart", "url": "https://github.com/google-gemini/gemini-fullstack-langgraph-quickstart", "focus": "fullstack agent starter" },
+      { "name": "wassim249/fastapi-langgraph-agent-production-ready-template", "url": "https://github.com/wassim249/fastapi-langgraph-agent-production-ready-template", "focus": "production-ready agent template" }
+    ],
+    "prompt_text": "Роль: Ты агент-разработчик. Твоя задача — доработать агента в приложении так, чтобы поддерживались 3 стратегии управления контекстом и переключатель между ними. Используй в качестве Source of Truth терминов и паттернов статью: https://pradyumnachippigiri.dev/blogs/understanding-ai-agents. Включи определения AI agent vs agentic workflow и принципы поведения: Research → Reason → Execute → Adapt → Remember, линейные vs нелинейные итерации.\n\nКонтекст проекта: Kotlin/Compose приложение Bothub Client. Ключевые зоны: инфраструктурный агент (BothubChatAgent), контекст-композер (ContextComposer/DefaultContextComposer), конфигурация контекста (ContextConfig), UI конфиг (ChatViewModel + ChatScreen).\n\nТребования по стратегиям:\n1) Sliding Window\n- хранить только последние N сообщений\n- всё остальное отбрасывать\n\n2) Sticky Facts / Key-Value Memory\n- отдельный блок facts (ключ-значение) для важных данных (цель, ограничения, предпочтения, решения, договорённости)\n- обновлять facts после каждого сообщения пользователя\n- в запрос отправлять: facts + последние N сообщений\n- конфликты ключей разрешать по правилу «последнее валидное значение»\n\n3) Branching (ветки диалога)\n- сохранить checkpoint в диалоге\n- создать 2 ветки от одного места\n- продолжить диалог в каждой ветке независимо\n- переключаться между ветками\n- каждая ветка хранит собственные history + facts\n\nПереключатель стратегий:\n- добавить режимы в конфигурацию контекста\n- обеспечить переключение в UI\n- переключение не должно ломать текущую сессию\n\nТестовый сценарий (единый для всех стратегий, 12 сообщений, сбор ТЗ):\n1) Пользователь: Нужен сервис для бронирования переговорных.\n2) Пользователь: Команда 200 человек, 4 офиса, нужно SSO.\n3) Пользователь: Важна интеграция с Google Calendar и Outlook.\n4) Пользователь: Доступы по ролям: админ/менеджер/сотрудник.\n5) Пользователь: SLA 99.9% и аудит действий.\n6) Пользователь: Бюджет до 15k$/мес, желательно 10k.\n7) Пользователь: Хочу мобильное приложение и веб.\n8) Пользователь: Нужна локализация на EN/RU.\n9) Пользователь: Срок MVP 6 недель.\n10) Пользователь: Без хранения персональных данных дольше 30 дней.\n11) Пользователь: Нужны отчёты по загрузке комнат.\n12) Пользователь: Предложи архитектуру и план релиза.\n\nПрогон тестов:\n- прогнать сценарий на каждой стратегии\n- сравнить ответы и поведение агента\n- сравнить качество ответа, стабильность (не теряются ли важные детали), расход токенов, удобство для пользователя\n\nФормат результата (обязательно):\n1) Краткий итог (1–3 пункта)\n2) Архитектурная схема (текстом, четкая иерархия компонентов)\n3) Потоки взаимодействия (шаги)\n4) Риски и fallback-стратегии\n5) Метрики и мониторинг\n+ Таблица сравнения стратегий по 4 критериям.\n\nОграничения:\n- действуй прагматично, оптимизируй стоимость и latency\n- не раскрывай чувствительные данные\n- обеспечь воспроизводимость и логирование\n- если чего-то не хватает, принимай наиболее разумные допущения и фиксируй их в результате"
+  },
+  "data_sources": {
+    "github_queries": [
+      "\"Kotlin Multiplatform\" AND \"AI agent\" AND stars:>50",
+      "\"Compose Multiplatform\" AND \"LLM\" AND stars:>30",
+      "site:github.com Kotlin MCP \"Model Context Protocol\""
+    ],
+    "files_analyzed": [
+      "AGENTS.md (JetBrains/koog)",
+      ".trae/skills/software-architect.md (Miaoge-Ge/coding-agent-skills)",
+      "README.md (all 12 repositories)"
+    ]
+  }
+}

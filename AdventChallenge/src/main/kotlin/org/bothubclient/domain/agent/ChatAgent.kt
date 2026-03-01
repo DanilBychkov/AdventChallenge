@@ -13,6 +13,22 @@ interface ChatAgent {
         temperature: Double
     ): ChatResult
 
+    suspend fun sendWithContext(
+        sessionId: String,
+        contextMessages: List<Message>,
+        userMessage: String,
+        model: String,
+        systemPrompt: String,
+        temperature: Double
+    ): ChatResult =
+        send(
+            sessionId = sessionId,
+            userMessage = userMessage,
+            model = model,
+            systemPrompt = systemPrompt,
+            temperature = temperature
+        )
+
     suspend fun getHistory(sessionId: String): List<Message>
 
     suspend fun getSessionMessages(sessionId: String): List<Message>
@@ -23,7 +39,11 @@ interface ChatAgent {
 
     fun getTotalHistoryTokens(sessionId: String): Int
 
-    fun isApproachingContextLimit(sessionId: String, model: String, threshold: Float = 0.8f): Boolean
+    fun isApproachingContextLimit(
+        sessionId: String,
+        model: String,
+        threshold: Float = 0.8f
+    ): Boolean
 
     fun truncateHistory(sessionId: String, keepLast: Int = 10)
 

@@ -16,9 +16,7 @@ import org.bothubclient.infrastructure.agent.BothubChatAgent
 import org.bothubclient.infrastructure.agent.CompressingChatAgent
 import org.bothubclient.infrastructure.api.BothubChatRepository
 import org.bothubclient.infrastructure.config.EnvironmentApiKeyProvider
-import org.bothubclient.infrastructure.context.ConcurrentSummaryStorage
-import org.bothubclient.infrastructure.context.DefaultContextComposer
-import org.bothubclient.infrastructure.context.LlmSummaryGenerator
+import org.bothubclient.infrastructure.context.*
 import org.bothubclient.infrastructure.persistence.FileChatHistoryStorage
 
 object ServiceLocator {
@@ -50,17 +48,19 @@ object ServiceLocator {
     private val summaryStorage: SummaryStorage by lazy { ConcurrentSummaryStorage() }
 
     private val summaryGenerator: LlmSummaryGenerator by lazy {
-        LlmSummaryGenerator(
-            client = httpClient,
-            getApiKey = { apiKeyProvider.getApiKey() }
-        )
+        LlmSummaryGenerator(client = httpClient, getApiKey = { apiKeyProvider.getApiKey() })
+    }
+
+    private val llmFactsExtractor: LlmFactsExtractor by lazy {
+        LlmFactsExtractor(client = httpClient, getApiKey = { apiKeyProvider.getApiKey() })
+    }
+
+    private val factsExtractor: HeuristicFactsExtractor by lazy {
+        HeuristicFactsExtractor(llmFactsExtractor = llmFactsExtractor)
     }
 
     private val contextComposer: DefaultContextComposer by lazy {
-        DefaultContextComposer(
-            chatAgent = baseChatAgent,
-            summaryStorage = summaryStorage
-        )
+        DefaultContextComposer(summaryStorage = summaryStorage)
     }
 
     val compressingChatAgent: CompressingChatAgent by lazy {
@@ -68,7 +68,8 @@ object ServiceLocator {
             delegate = baseChatAgent,
             summaryGenerator = summaryGenerator,
             summaryStorage = summaryStorage,
-            contextComposer = contextComposer
+            contextComposer = contextComposer,
+            factsExtractor = factsExtractor
         )
     }
 

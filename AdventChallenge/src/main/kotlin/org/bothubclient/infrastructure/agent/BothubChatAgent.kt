@@ -28,12 +28,18 @@ private class TokenAccumulator {
     private val _lastPromptTokens = AtomicInteger(0)
     private val _lastCompletionTokens = AtomicInteger(0)
 
-    val totalPromptTokens: Int get() = _totalPromptTokens.get()
-    val totalCompletionTokens: Int get() = _totalCompletionTokens.get()
-    val totalTokens: Int get() = _totalTokens.get()
-    val messageCount: Int get() = _messageCount.get()
-    val lastPromptTokens: Int get() = _lastPromptTokens.get()
-    val lastCompletionTokens: Int get() = _lastCompletionTokens.get()
+    val totalPromptTokens: Int
+        get() = _totalPromptTokens.get()
+    val totalCompletionTokens: Int
+        get() = _totalCompletionTokens.get()
+    val totalTokens: Int
+        get() = _totalTokens.get()
+    val messageCount: Int
+        get() = _messageCount.get()
+    val lastPromptTokens: Int
+        get() = _lastPromptTokens.get()
+    val lastCompletionTokens: Int
+        get() = _lastCompletionTokens.get()
 
     fun update(promptTokens: Int, completionTokens: Int, totalTokens: Int) {
         _totalPromptTokens.addAndGet(promptTokens)
@@ -51,14 +57,15 @@ private class TokenAccumulator {
         _messageCount.set((_messageCount.get() * factor).toInt())
     }
 
-    fun snapshot(): TokenSnapshot = TokenSnapshot(
-        totalPromptTokens = _totalPromptTokens.get(),
-        totalCompletionTokens = _totalCompletionTokens.get(),
-        totalTokens = _totalTokens.get(),
-        messageCount = _messageCount.get(),
-        lastPromptTokens = _lastPromptTokens.get(),
-        lastCompletionTokens = _lastCompletionTokens.get()
-    )
+    fun snapshot(): TokenSnapshot =
+        TokenSnapshot(
+            totalPromptTokens = _totalPromptTokens.get(),
+            totalCompletionTokens = _totalCompletionTokens.get(),
+            totalTokens = _totalTokens.get(),
+            messageCount = _messageCount.get(),
+            lastPromptTokens = _lastPromptTokens.get(),
+            lastCompletionTokens = _lastCompletionTokens.get()
+        )
 }
 
 private data class TokenSnapshot(
@@ -98,17 +105,22 @@ class BothubChatAgent(
         return historyBySessionId[sessionId]?.toList().orEmpty()
     }
 
-    override fun getSessionTokenStatistics(sessionId: String, model: String): SessionTokenStatistics {
+    override fun getSessionTokenStatistics(
+        sessionId: String,
+        model: String
+    ): SessionTokenStatistics {
         val accumulator = sessionTokenAccumulator[sessionId] ?: return SessionTokenStatistics.EMPTY
         val snapshot = accumulator.snapshot()
 
         val contextLimit = ModelContextLimits.getContextLimit(model)
-        val contextUsagePercent = ModelContextLimits.getContextUsagePercent(snapshot.totalTokens, model)
-        val estimatedCost = ModelPricing.calculateCostRub(
-            model,
-            snapshot.totalPromptTokens,
-            snapshot.totalCompletionTokens
-        )
+        val contextUsagePercent =
+            ModelContextLimits.getContextUsagePercent(snapshot.totalTokens, model)
+        val estimatedCost =
+            ModelPricing.calculateCostRub(
+                model,
+                snapshot.totalPromptTokens,
+                snapshot.totalCompletionTokens
+            )
 
         return SessionTokenStatistics(
             sessionId = sessionId,
@@ -128,7 +140,11 @@ class BothubChatAgent(
         return sessionTokenAccumulator[sessionId]?.totalTokens ?: 0
     }
 
-    override fun isApproachingContextLimit(sessionId: String, model: String, threshold: Float): Boolean {
+    override fun isApproachingContextLimit(
+        sessionId: String,
+        model: String,
+        threshold: Float
+    ): Boolean {
         val totalTokens = getTotalHistoryTokens(sessionId)
         val isApproaching = ModelContextLimits.isApproachingLimit(totalTokens, model, threshold)
 
@@ -201,53 +217,109 @@ class BothubChatAgent(
         systemPrompt: String,
         temperature: Double
     ): ChatResult {
-        val historySize = historyBySessionId[sessionId]?.size ?: 0
+        val past = historyBySessionId[sessionId]?.toList().orEmpty()
+        val historySize = past.size
 
         AppLogger.requestStart(TAG, sessionId, model, historySize, userMessage.length)
-        
+
         return try {
-            val apiKey = getApiKey()
-            val trimmedUrl = ApiConfig.BASE_URL.trim().trimEnd(',', ' ')
+            sendInternal(
+                sessionId = sessionId,
+                pastMessages = past,
+                userMessage = userMessage,
+                model = model,
+                systemPrompt = systemPrompt,
+                temperature = temperature,
+                updateHistory = true
+            )
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "Request failed", e)
+            ChatResult.Error(e)
+        }
+    }
 
-            val apiMessages = buildList {
-                add(ApiChatMessage(role = "system", content = systemPrompt))
+    override suspend fun sendWithContext(
+        sessionId: String,
+        contextMessages: List<Message>,
+        userMessage: String,
+        model: String,
+        systemPrompt: String,
+        temperature: Double
+    ): ChatResult {
+        AppLogger.requestStart(TAG, sessionId, model, contextMessages.size, userMessage.length)
+        return try {
+            sendInternal(
+                sessionId = sessionId,
+                pastMessages = contextMessages,
+                userMessage = userMessage,
+                model = model,
+                systemPrompt = systemPrompt,
+                temperature = temperature,
+                updateHistory = false
+            )
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "Request failed", e)
+            ChatResult.Error(e)
+        }
+    }
 
-                val past = historyBySessionId[sessionId]?.toList().orEmpty()
-                past.forEach { message ->
-                    val role = when (message.role) {
+    private suspend fun sendInternal(
+        sessionId: String,
+        pastMessages: List<Message>,
+        userMessage: String,
+        model: String,
+        systemPrompt: String,
+        temperature: Double,
+        updateHistory: Boolean
+    ): ChatResult {
+        val apiKey = getApiKey()
+        val trimmedUrl = ApiConfig.BASE_URL.trim().trimEnd(',', ' ')
+
+        val apiMessages = buildList {
+            add(ApiChatMessage(role = "system", content = systemPrompt))
+
+            pastMessages.forEach { message ->
+                val role =
+                    when (message.role) {
                         MessageRole.USER -> "user"
                         MessageRole.ASSISTANT -> "assistant"
                         else -> null
                     }
-                    if (role != null) {
-                        add(ApiChatMessage(role = role, content = message.content))
-                    }
+                if (role != null) {
+                    add(ApiChatMessage(role = role, content = message.content))
                 }
-
-                add(ApiChatMessage(role = "user", content = userMessage))
             }
 
-            val request = ApiChatRequest(
+            add(ApiChatMessage(role = "user", content = userMessage))
+        }
+
+        val request =
+            ApiChatRequest(
                 model = model,
                 messages = apiMessages,
                 max_tokens = ApiConfig.DEFAULT_MAX_TOKENS,
                 temperature = temperature
             )
 
-            FileLogger.section("API REQUEST")
-            FileLogger.log(TAG, "Messages count: ${apiMessages.size}")
-            apiMessages.forEachIndexed { index, msg ->
-                val preview = if (msg.content.length > 100) msg.content.take(100) + "..." else msg.content
-                FileLogger.log(TAG, "  [$index] ${msg.role}: $preview")
-            }
-            if (apiMessages.any { it.role == "system" && it.content.contains("ПРЕДЫДУЩИЙ КОНТЕКСТ") }) {
-                FileLogger.log(TAG, "*** CONTEXT SUMMARY IS INCLUDED IN SYSTEM PROMPT ***")
-            }
+        FileLogger.section("API REQUEST")
+        FileLogger.log(TAG, "Messages count: ${apiMessages.size}")
+        apiMessages.forEachIndexed { index, msg ->
+            val preview =
+                if (msg.content.length > 100) msg.content.take(100) + "..." else msg.content
+            FileLogger.log(TAG, "  [$index] ${msg.role}: $preview")
+        }
+        if (apiMessages.any { it.role == "system" && it.content.contains("ПРЕДЫДУЩИЙ КОНТЕКСТ") }) {
+            FileLogger.log(TAG, "*** CONTEXT SUMMARY IS INCLUDED IN SYSTEM PROMPT ***")
+        }
+        if (apiMessages.any { it.role == "system" && it.content.contains("[FACTS]") }) {
+            FileLogger.log(TAG, "*** FACTS MEMORY IS INCLUDED IN SYSTEM PROMPT ***")
+        }
 
-            var responseTimeMs = 0L
-            val chatResponse: ApiChatResponse
-            responseTimeMs = measureTimeMillis {
-                val response: HttpResponse = client.post(trimmedUrl) {
+        var responseTimeMs = 0L
+        val chatResponse: ApiChatResponse
+        responseTimeMs = measureTimeMillis {
+            val response: HttpResponse =
+                client.post(trimmedUrl) {
                     headers {
                         append(HttpHeaders.Authorization, "Bearer $apiKey")
                         append(HttpHeaders.ContentType, ContentType.Application.Json.toString())
@@ -260,90 +332,100 @@ class BothubChatAgent(
                     setBody(request)
                 }
 
-                if (!response.status.isSuccess()) {
-                    val errorBody = response.bodyAsText()
-                    AppLogger.e(TAG, "HTTP error ${response.status}", null)
+            if (!response.status.isSuccess()) {
+                val errorBody = response.bodyAsText()
+                AppLogger.e(TAG, "HTTP error ${response.status}", null)
 
-                    if (errorBody.contains(CONTEXT_LENGTH_EXCEEDED, ignoreCase = true)) {
-                        return handleContextLengthExceeded(sessionId, model, errorBody)
-                    }
-                    
-                    return ChatResult.Error(Exception("HTTP ошибка ${response.status}: $errorBody"))
+                if (errorBody.contains(CONTEXT_LENGTH_EXCEEDED, ignoreCase = true)) {
+                    return handleContextLengthExceeded(sessionId, model, errorBody)
                 }
 
-                chatResponse = response.body()
+                return ChatResult.Error(Exception("HTTP ошибка ${response.status}: $errorBody"))
             }
 
-            when {
-                chatResponse.error != null -> {
-                    val errorMsg = chatResponse.error.message ?: "Unknown error"
-                    val errorType = chatResponse.error.type
-                    val errorCode = chatResponse.error.code
+            chatResponse = response.body()
+        }
 
-                    AppLogger.e(TAG, "API error: $errorMsg (type=$errorType, code=$errorCode)", null)
+        return when {
+            chatResponse.error != null -> {
+                val errorMsg = chatResponse.error.message ?: "Unknown error"
+                val errorType = chatResponse.error.type
+                val errorCode = chatResponse.error.code
 
-                    if (errorType == CONTEXT_LENGTH_EXCEEDED || errorCode == CONTEXT_LENGTH_EXCEEDED) {
-                        return handleContextLengthExceeded(sessionId, model, errorMsg)
-                    }
+                AppLogger.e(TAG, "API error: $errorMsg (type=$errorType, code=$errorCode)", null)
 
+                if (errorType == CONTEXT_LENGTH_EXCEEDED || errorCode == CONTEXT_LENGTH_EXCEEDED) {
+                    handleContextLengthExceeded(sessionId, model, errorMsg)
+                } else {
                     ChatResult.Error(Exception("API ошибка: $errorMsg"))
                 }
+            }
 
-                chatResponse.choices.isNullOrEmpty() -> {
-                    AppLogger.e(TAG, "Empty response from model", null)
-                    ChatResult.Error(Exception("Не удалось получить ответ от модели"))
-                }
+            chatResponse.choices.isNullOrEmpty() -> {
+                AppLogger.e(TAG, "Empty response from model", null)
+                ChatResult.Error(Exception("Не удалось получить ответ от модели"))
+            }
 
-                else -> {
-                    val content = chatResponse.choices.first().message?.content
+            else -> {
+                val content =
+                    chatResponse.choices.first().message?.content
                         ?: "Не удалось получить ответ от модели"
 
+                if (updateHistory) {
                     historyBySessionId.compute(sessionId) { _, current ->
-                        val updated = (current ?: mutableListOf()).apply {
-                            add(Message.user(userMessage))
-                            add(Message.assistant(content))
-                            while (size > maxHistoryMessages) {
-                                removeAt(0)
+                        val updated =
+                            (current ?: mutableListOf()).apply {
+                                add(Message.user(userMessage))
+                                add(Message.assistant(content))
+                                while (size > maxHistoryMessages) {
+                                    removeAt(0)
+                                }
                             }
-                        }
                         updated
                     }
+                }
 
-                    val promptTokens = chatResponse.usage?.prompt_tokens ?: 0
-                    val completionTokens = chatResponse.usage?.completion_tokens ?: 0
-                    val totalTokens = chatResponse.usage?.total_tokens ?: 0
+                val promptTokens = chatResponse.usage?.prompt_tokens ?: 0
+                val completionTokens = chatResponse.usage?.completion_tokens ?: 0
+                val totalTokens = chatResponse.usage?.total_tokens ?: 0
 
-                    updateTokenAccumulator(sessionId, promptTokens, completionTokens, totalTokens)
+                updateTokenAccumulator(sessionId, promptTokens, completionTokens, totalTokens)
 
-                    val contextUsagePercent = ModelContextLimits.getContextUsagePercent(
+                val contextUsagePercent =
+                    ModelContextLimits.getContextUsagePercent(
                         sessionTokenAccumulator[sessionId]?.totalTokens ?: 0,
                         model
                     )
 
-                    AppLogger.tokenInfo(
-                        TAG, sessionId,
-                        promptTokens, completionTokens, totalTokens,
-                        contextUsagePercent, model
-                    )
+                AppLogger.tokenInfo(
+                    TAG,
+                    sessionId,
+                    promptTokens,
+                    completionTokens,
+                    totalTokens,
+                    contextUsagePercent,
+                    model
+                )
 
-                    AppLogger.requestEnd(TAG, sessionId, responseTimeMs, totalTokens)
+                AppLogger.requestEnd(TAG, sessionId, responseTimeMs, totalTokens)
 
-                    val metrics = RequestMetrics(
+                val metrics =
+                    RequestMetrics(
                         promptTokens = promptTokens,
                         completionTokens = completionTokens,
                         totalTokens = totalTokens,
                         responseTimeMs = responseTimeMs
                     )
-                    ChatResult.Success(Message.assistant(content), metrics)
-                }
+                ChatResult.Success(Message.assistant(content), metrics)
             }
-        } catch (e: Exception) {
-            AppLogger.e(TAG, "Request failed", e)
-            ChatResult.Error(e)
         }
     }
 
-    private fun handleContextLengthExceeded(sessionId: String, model: String, errorDetails: String): ChatResult.Error {
+    private fun handleContextLengthExceeded(
+        sessionId: String,
+        model: String,
+        errorDetails: String
+    ): ChatResult.Error {
         AppLogger.w(TAG, "Context length exceeded for session $sessionId | $errorDetails")
 
         val historySize = historyBySessionId[sessionId]?.size ?: 0

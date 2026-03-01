@@ -77,6 +77,12 @@ class ChatViewModel(
     var summaryBlocks by mutableStateOf<List<SummaryBlock>>(emptyList())
         private set
 
+    var facts by mutableStateOf<Map<String, Map<String, String>>>(emptyMap())
+        private set
+
+    var contextMessages by mutableStateOf<List<Message>>(emptyList())
+        private set
+
     var isContextConfigExpanded by mutableStateOf(false)
         private set
 
@@ -103,6 +109,15 @@ class ChatViewModel(
     var isHistoryLoaded by mutableStateOf(false)
         private set
 
+    var branches by mutableStateOf<List<String>>(emptyList())
+        private set
+
+    var activeBranchId by mutableStateOf("main")
+        private set
+
+    var branchCheckpointSize by mutableStateOf(0)
+        private set
+
     fun loadHistory(scope: CoroutineScope) {
         if (isHistoryLoaded) return
 
@@ -112,6 +127,8 @@ class ChatViewModel(
             messages = sessionMessages
             updateTokenStatistics()
             updateSummaryBlocks()
+            refreshBranchState()
+            refreshContextMessages()
             statusMessage =
                 if (sessionMessages.isNotEmpty()) {
                     "Восстановлено ${sessionMessages.size} сообщений"
@@ -137,6 +154,7 @@ class ChatViewModel(
         log("CONFIG UPDATE: old=$contextConfig -> new=$newConfig")
         contextConfig = newConfig
         compressingChatAgent?.updateConfig(newConfig)
+        refreshContextMessages()
     }
 
     fun toggleContextConfigExpanded() {
@@ -157,6 +175,65 @@ class ChatViewModel(
     fun onAutoCompressionToggled(enabled: Boolean) {
         log("onAutoCompressionToggled: $enabled")
         updateContextConfig(contextConfig.withAutoCompression(enabled))
+    }
+
+    fun onStrategySelected(strategy: ContextStrategy) {
+        log("onStrategySelected: $strategy")
+        updateContextConfig(contextConfig.withStrategy(strategy))
+        refreshBranchState()
+    }
+
+    fun onBranchSelected(scope: CoroutineScope, branchId: String) {
+        compressingChatAgent?.setActiveBranch("chat-ui", branchId)
+        refreshBranchState()
+        scope.launch {
+            messages = getSessionMessagesUseCase()
+            updateSummaryBlocks()
+            refreshBranchState()
+        }
+    }
+
+    fun onBranchCheckpointSizeChanged(value: Int) {
+        branchCheckpointSize = value
+    }
+
+    fun createBranchFromCheckpoint(scope: CoroutineScope) {
+        val agent = compressingChatAgent ?: return
+        val newBranchId = agent.createBranchFromCheckpoint("chat-ui", branchCheckpointSize)
+        agent.setActiveBranch("chat-ui", newBranchId)
+        refreshBranchState()
+        scope.launch {
+            messages = getSessionMessagesUseCase()
+            updateSummaryBlocks()
+            refreshBranchState()
+        }
+    }
+
+    private fun refreshBranchState() {
+        compressingChatAgent?.let { agent ->
+            branches = agent.getBranchIds("chat-ui")
+            activeBranchId = agent.getActiveBranchId("chat-ui")
+            branchCheckpointSize = messages.size
+            facts = agent.getFacts("chat-ui")
+            log("Updated facts: groups=${facts.size} total=${facts.values.sumOf { it.size }}")
+        }
+    }
+
+    private fun refreshContextMessages() {
+        if (contextConfig.strategy != ContextStrategy.SLIDING_WINDOW) {
+            contextMessages = emptyList()
+            return
+        }
+        compressingChatAgent?.let { agent ->
+            val composed =
+                agent.getComposedContext(
+                    sessionId = "chat-ui",
+                    systemPrompt = effectivePromptText,
+                    userMessage = ""
+                )
+            contextMessages = composed.recentMessages
+            log("Updated context messages: ${contextMessages.size}")
+        }
     }
 
     private fun parseTemperatureOrNull(text: String): Double? {
@@ -252,7 +329,12 @@ class ChatViewModel(
         temperatureError = null
         tokenStatistics = SessionTokenStatistics.EMPTY
         summaryBlocks = emptyList()
+        facts = emptyMap()
+        contextMessages = emptyList()
         lastCompressionError = null
+        branches = emptyList()
+        activeBranchId = "main"
+        branchCheckpointSize = 0
         isHistoryLoaded = true
     }
 
@@ -295,20 +377,33 @@ class ChatViewModel(
                             metrics.promptTokens,
                             metrics.completionTokens
                         )
-                    val messageWithMetrics =
-                        Message.assistant(
-                            result.message.content,
-                            MessageMetrics(
-                                promptTokens = metrics.promptTokens,
-                                completionTokens = metrics.completionTokens,
-                                totalTokens = metrics.totalTokens,
-                                responseTimeMs = metrics.responseTimeMs,
-                                cost = cost
-                            )
-                        )
-                    messages = messages + messageWithMetrics
+                    val stored = getSessionMessagesUseCase()
+                    val enriched =
+                        stored.map { m ->
+                            if (m.role == MessageRole.ASSISTANT &&
+                                m.content == result.message.content &&
+                                m.metrics == null
+                            ) {
+                                m.copy(
+                                    metrics =
+                                        MessageMetrics(
+                                            promptTokens = metrics.promptTokens,
+                                            completionTokens =
+                                                metrics.completionTokens,
+                                            totalTokens = metrics.totalTokens,
+                                            responseTimeMs = metrics.responseTimeMs,
+                                            cost = cost
+                                        )
+                                )
+                            } else {
+                                m
+                            }
+                        }
+                    messages = enriched
                     updateTokenStatistics()
                     updateSummaryBlocks()
+                    refreshBranchState()
+                    refreshContextMessages()
 
                     if (summaryBlocks.isNotEmpty()) {
                         statusMessage = "Готов к работе (${summaryBlocks.size} блоков сжатия)"
@@ -322,6 +417,8 @@ class ChatViewModel(
                 is ChatResult.Error -> {
                     messages = messages + Message.error("Ошибка: ${result.exception.message}")
                     statusMessage = "Ошибка запроса"
+                    refreshBranchState()
+                    refreshContextMessages()
                 }
             }
             isLoading = false
