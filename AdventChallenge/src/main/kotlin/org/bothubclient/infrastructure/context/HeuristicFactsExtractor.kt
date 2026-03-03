@@ -1,5 +1,9 @@
 package org.bothubclient.infrastructure.context
 
+import org.bothubclient.domain.entity.FactEntry
+import org.bothubclient.domain.entity.MemoryLayer
+import org.bothubclient.domain.entity.MemoryOperation
+import org.bothubclient.domain.entity.WmCategory
 import org.bothubclient.infrastructure.logging.AppLogger
 import java.util.*
 
@@ -199,6 +203,159 @@ class HeuristicFactsExtractor(private val llmFactsExtractor: LlmFactsExtractor? 
         }
     }
 
+    fun extractOperationsHeuristic(
+        userMessage: String,
+        existingWorkingMemory: Map<WmCategory, Map<String, FactEntry>>
+    ): List<MemoryOperation> {
+        val facts =
+            extractUpdates(userMessage).map { (k, v) ->
+                LlmFactsExtractor.Fact(
+                    category = categoryForKey(k),
+                    key = k,
+                    value = v,
+                    confidence = confidenceForKey(k)
+                )
+            }
+        return buildExtractOps(facts, existingWorkingMemory)
+    }
+
+    suspend fun extractOperations(
+        userMessage: String,
+        existingWorkingMemory: Map<WmCategory, Map<String, FactEntry>>
+    ): List<MemoryOperation> {
+        val llm = llmFactsExtractor
+        if (llm == null) return extractOperationsHeuristic(userMessage, existingWorkingMemory)
+
+        val facts =
+            runCatching {
+                val existingLegacy =
+                    existingWorkingMemory
+                        .mapKeys { (cat, _) -> legacyCategoryForWm(cat) }
+                        .mapValues { (_, group) ->
+                            group.mapValues { (_, e) -> e.value }
+                        }
+                llm.extractFacts(userMessage = userMessage, existingGroups = existingLegacy)
+                    .facts
+            }
+                .getOrElse { e ->
+                    AppLogger.e(
+                        TAG,
+                        "LLM facts extraction failed, using heuristics fallback",
+                        e
+                    )
+                    extractUpdates(userMessage).map { (k, v) ->
+                        LlmFactsExtractor.Fact(
+                            category = categoryForKey(k),
+                            key = k,
+                            value = v,
+                            confidence = confidenceForKey(k)
+                        )
+                    }
+                }
+
+        return buildExtractOps(facts, existingWorkingMemory)
+    }
+
+    private fun buildExtractOps(
+        facts: List<LlmFactsExtractor.Fact>,
+        existingWorkingMemory: Map<WmCategory, Map<String, FactEntry>>
+    ): List<MemoryOperation> {
+        val ops = mutableListOf<MemoryOperation>()
+        facts.forEach { fact ->
+            val key = fact.key.trim()
+            val value = fact.value.trim()
+            if (key.isBlank() || value.isBlank()) return@forEach
+
+            val category = wmCategoryForFact(fact)
+            val existingValue = existingWorkingMemory[category]?.get(key)?.value
+            if (existingValue == value) return@forEach
+
+            val c = fact.confidence.coerceIn(0.0, 1.0).toFloat()
+            ops +=
+                MemoryOperation(
+                    op = "EXTRACT",
+                    fromLayer = MemoryLayer.STM,
+                    toLayer = MemoryLayer.WM,
+                    category = category,
+                    key = key,
+                    value = value,
+                    confidence = c
+                )
+        }
+        return ops
+    }
+
+    private fun wmCategoryForFact(fact: LlmFactsExtractor.Fact): WmCategory {
+        return when (fact.category.trim().lowercase(Locale.getDefault())) {
+            "identity", "preferences" -> WmCategory.USER_INFO
+            "project", "requirements" -> WmCategory.TASK
+            "constraints", "timeline", "progress" -> WmCategory.PROGRESS
+            "technical", "business", "context", "other" -> WmCategory.CONTEXT
+            else ->
+                when (fact.key.trim().lowercase(Locale.getDefault())) {
+                    "user_name",
+                    "company",
+                    "role",
+                    "contact",
+                    "language",
+                    "timezone",
+                    "locale",
+                    "locales" -> WmCategory.USER_INFO
+
+                    "name",
+                    "description",
+                    "scope",
+                    "features",
+                    "integrations",
+                    "platforms",
+                    "sso",
+                    "compliance",
+                    "access_roles",
+                    "reports" -> WmCategory.TASK
+
+                    "deadlines",
+                    "milestones",
+                    "budget",
+                    "timeline",
+                    "team_size",
+                    "resources",
+                    "offices" -> WmCategory.PROGRESS
+
+                    else -> WmCategory.CONTEXT
+                }
+        }
+    }
+
+    private fun legacyCategoryForWm(category: WmCategory): String {
+        return when (category) {
+            WmCategory.USER_INFO -> "identity"
+            WmCategory.TASK -> "project"
+            WmCategory.CONTEXT -> "technical"
+            WmCategory.PROGRESS -> "timeline"
+        }
+    }
+
+    private fun confidenceForKey(key: String): Double {
+        return when (key.trim().lowercase(Locale.getDefault())) {
+            "user_name", "company", "role", "contact" -> 0.9
+            "language", "timezone", "locale", "locales" -> 0.85
+            "stack", "architecture", "api" -> 0.9
+            "name", "description", "scope" -> 0.85
+            "features",
+            "integrations",
+            "platforms",
+            "sso",
+            "compliance",
+            "access_roles",
+            "reports" -> 0.8
+
+            "budget", "timeline", "team_size", "resources", "offices", "deadlines", "milestones" ->
+                0.8
+
+            else -> 0.7
+        }
+    }
+
     private fun mergeFlatUpdatesIntoGroups(
         updates: Map<String, String>,
         existingGroups: Map<String, Map<String, String>>
@@ -261,7 +418,6 @@ class HeuristicFactsExtractor(private val llmFactsExtractor: LlmFactsExtractor? 
             "compliance",
             "access_roles",
             "reports" -> "requirements"
-
             "budget", "timeline", "team_size", "resources", "offices" -> "constraints"
             "language", "timezone", "locale", "locales" -> "preferences"
             "stack", "architecture", "api" -> "technical"

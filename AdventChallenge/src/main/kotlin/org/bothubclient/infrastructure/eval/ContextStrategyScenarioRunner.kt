@@ -1,9 +1,6 @@
 package org.bothubclient.infrastructure.eval
 
-import org.bothubclient.domain.entity.ContextConfig
-import org.bothubclient.domain.entity.ContextStrategy
-import org.bothubclient.domain.entity.Message
-import org.bothubclient.domain.entity.MessageRole
+import org.bothubclient.domain.entity.*
 import org.bothubclient.infrastructure.context.ConcurrentSummaryStorage
 import org.bothubclient.infrastructure.context.DefaultContextComposer
 import org.bothubclient.infrastructure.context.HeuristicFactsExtractor
@@ -95,7 +92,10 @@ object ContextStrategyScenarioRunner {
                     systemPrompt = "SYSTEM",
                     userMessage = userMsg,
                     historyMessages = history.toList(),
-                    facts = facts.mapValues { (_, v) -> v.toMap() }.toMap(),
+                    facts =
+                        toWorkingMemory(
+                            facts.mapValues { (_, v) -> v.toMap() }.toMap()
+                        ),
                     config = config
                 )
 
@@ -158,12 +158,15 @@ object ContextStrategyScenarioRunner {
                     systemPrompt = "SYSTEM",
                     userMessage = userMsg,
                     historyMessages = branchAHistory.toList(),
-                    facts = branchAFacts.mapValues { (_, v) -> v.toMap() }.toMap(),
+                    facts =
+                        toWorkingMemory(
+                            branchAFacts.mapValues { (_, v) -> v.toMap() }.toMap()
+                        ),
                     config = config
                 )
             FileLogger.log(
                 tag,
-                "branch=A turn=$turn recent=${ctxA.recentMessages.size} facts=${ctxA.facts.size} tokens~=${ctxA.totalEstimatedTokens}"
+                "branch=A turn=$turn recent=${ctxA.recentMessages.size} facts=${ctxA.facts.values.sumOf { it.size }} tokens~=${ctxA.totalEstimatedTokens}"
             )
             branchAHistory.add(Message.user(userMsg))
 
@@ -177,12 +180,15 @@ object ContextStrategyScenarioRunner {
                     systemPrompt = "SYSTEM",
                     userMessage = userMsg,
                     historyMessages = branchBHistory.toList(),
-                    facts = branchBFacts.mapValues { (_, v) -> v.toMap() }.toMap(),
+                    facts =
+                        toWorkingMemory(
+                            branchBFacts.mapValues { (_, v) -> v.toMap() }.toMap()
+                        ),
                     config = config
                 )
             FileLogger.log(
                 tag,
-                "branch=B turn=$turn recent=${ctxB.recentMessages.size} facts=${ctxB.facts.size} tokens~=${ctxB.totalEstimatedTokens}"
+                "branch=B turn=$turn recent=${ctxB.recentMessages.size} facts=${ctxB.facts.values.sumOf { it.size }} tokens~=${ctxB.totalEstimatedTokens}"
             )
             branchBHistory.add(Message.user(userMsg))
         }
@@ -222,6 +228,28 @@ object ContextStrategyScenarioRunner {
             if (inner.isNotEmpty()) out[category] = inner
         }
         return out
+    }
+
+    private fun toWorkingMemory(
+        legacyGroups: Map<String, Map<String, String>>
+    ): Map<WmCategory, Map<String, FactEntry>> {
+        val out = LinkedHashMap<WmCategory, LinkedHashMap<String, FactEntry>>()
+        legacyGroups.forEach { (legacyCategory, group) ->
+            val category =
+                when (legacyCategory.trim().lowercase()) {
+                    "identity", "preferences" -> WmCategory.USER_INFO
+                    "project", "requirements" -> WmCategory.TASK
+                    "constraints", "timeline" -> WmCategory.PROGRESS
+                    else -> WmCategory.CONTEXT
+                }
+            val dst = out.getOrPut(category) { LinkedHashMap() }
+            group.forEach { (k, v) ->
+                val kk = k.trim()
+                val vv = v.trim()
+                if (kk.isNotBlank() && vv.isNotBlank()) dst[kk] = FactEntry(value = vv)
+            }
+        }
+        return out.mapValues { (_, v) -> v.toMap() }
     }
 
     private fun totalFacts(groups: LinkedHashMap<String, LinkedHashMap<String, String>>): Int =

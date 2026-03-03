@@ -3,7 +3,7 @@ package org.bothubclient.domain.entity
 data class ComposedContext(
     val systemPrompt: String,
     val summaryBlocks: List<SummaryBlock>,
-    val facts: Map<String, Map<String, String>>,
+    val facts: Map<WmCategory, Map<String, FactEntry>>,
     val recentMessages: List<Message>,
     val userMessage: String,
     val includeAgentPrimer: Boolean
@@ -35,13 +35,15 @@ data class ComposedContext(
         get() {
             if (facts.isEmpty()) return ""
             return buildString {
-                append("[FACTS]\n")
+                append("[WORKING_MEMORY]\n")
                 facts.toSortedMap().forEach { (category, group) ->
                     if (group.isEmpty()) return@forEach
-                    append("[$category]\n")
-                    group.toSortedMap().forEach { (k, v) -> append("$k: $v\n") }
+                    append("[${category.name}]\n")
+                    group.toSortedMap().forEach { (k, entry) ->
+                        append("$k: ${entry.value} (confidence=${"%.2f".format(entry.confidence)}, useCount=${entry.useCount})\n")
+                    }
                 }
-                append("[END FACTS]\n")
+                append("[END WORKING_MEMORY]\n")
             }
         }
 

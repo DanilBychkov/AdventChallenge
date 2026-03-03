@@ -17,6 +17,7 @@ import org.bothubclient.infrastructure.agent.CompressingChatAgent
 import org.bothubclient.infrastructure.api.BothubChatRepository
 import org.bothubclient.infrastructure.config.EnvironmentApiKeyProvider
 import org.bothubclient.infrastructure.context.*
+import org.bothubclient.infrastructure.memory.LtmRecaller
 import org.bothubclient.infrastructure.persistence.FileChatHistoryStorage
 
 object ServiceLocator {
@@ -59,6 +60,10 @@ object ServiceLocator {
         HeuristicFactsExtractor(llmFactsExtractor = llmFactsExtractor)
     }
 
+    private val ltmRecaller: LtmRecaller by lazy {
+        LtmRecaller(client = httpClient, getApiKey = { apiKeyProvider.getApiKey() })
+    }
+
     private val contextComposer: DefaultContextComposer by lazy {
         DefaultContextComposer(summaryStorage = summaryStorage)
     }
@@ -69,7 +74,8 @@ object ServiceLocator {
             summaryGenerator = summaryGenerator,
             summaryStorage = summaryStorage,
             contextComposer = contextComposer,
-            factsExtractor = factsExtractor
+            factsExtractor = factsExtractor,
+            ltmRecaller = ltmRecaller
         )
     }
 

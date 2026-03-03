@@ -9,9 +9,13 @@ import org.bothubclient.domain.context.SummaryGenerator
 import org.bothubclient.domain.context.SummaryResult
 import org.bothubclient.domain.context.SummaryStorage
 import org.bothubclient.domain.entity.*
+import org.bothubclient.domain.memory.LongTermMemoryStore
+import org.bothubclient.domain.memory.MemoryItem
 import org.bothubclient.infrastructure.context.HeuristicFactsExtractor
 import org.bothubclient.infrastructure.logging.AppLogger
 import org.bothubclient.infrastructure.logging.FileLogger
+import org.bothubclient.infrastructure.memory.FileLongTermMemoryStore
+import org.bothubclient.infrastructure.memory.LtmRecaller
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicReference
 
@@ -27,6 +31,8 @@ class CompressingChatAgent(
     private val summaryStorage: SummaryStorage,
     private val contextComposer: ContextComposer,
     private val factsExtractor: HeuristicFactsExtractor = HeuristicFactsExtractor(),
+    private val ltmRecaller: LtmRecaller,
+    private val longTermMemoryStore: LongTermMemoryStore = FileLongTermMemoryStore(),
     initialConfig: ContextConfig = ContextConfig.DEFAULT
 ) : ChatAgent {
 
@@ -162,23 +168,18 @@ class CompressingChatAgent(
         log("Config: $currentConfig")
 
         if (currentConfig.enableFactsMemory) {
-            val existingGroups =
-                synchronized(branch) { branch.facts.mapValues { (_, v) -> v.toMap() }.toMap() }
+            val existingWm = synchronized(branch) { snapshotWorkingMemory(branch) }
+            val ops = factsExtractor.extractOperations(userMessage, existingWm)
 
-            val updatedGroups =
-                factsExtractor.extractUpdatedGroups(
-                    userMessage = userMessage,
-                    existingGroups = existingGroups
-                )
-
-            if (updatedGroups != existingGroups) {
-                synchronized(branch) {
-                    branch.facts.clear()
-                    branch.facts.putAll(toMutableGroups(updatedGroups))
-                    trimFacts(branch.facts, currentConfig.maxFacts)
-                }
-                val totalFacts = synchronized(branch) { totalFacts(branch.facts) }
-                log("Facts updated: groups=${updatedGroups.size}, totalFacts=$totalFacts")
+            if (ops.isNotEmpty()) {
+                val forgetOps =
+                    synchronized(branch) {
+                        applyExtractOperations(branch.workingMemory, ops)
+                        trimWorkingMemory(branch.workingMemory, currentConfig.maxFacts)
+                    }
+                (ops + forgetOps).forEach { log("MemoryOp: $it") }
+                val totalFacts = synchronized(branch) { totalFacts(branch.workingMemory) }
+                log("Facts updated: ops=${ops.size}, totalFacts=$totalFacts")
             }
         }
 
@@ -188,10 +189,12 @@ class CompressingChatAgent(
             when (compressionResult) {
                 is CompressionResult.Success -> {
                     log("SUCCESS Compression: block ${compressionResult.newBlock.id}")
+                    persistImportantFactsFromWorkingMemory(branch, limit = 24)
                     _compressionEvents.emit(CompressionEvent.Complete(compressionResult.newBlock))
                 }
                 is CompressionResult.Partial -> {
                     log("PARTIAL Compression: ${compressionResult.warning}")
+                    persistImportantFactsFromWorkingMemory(branch, limit = 24)
                     _compressionEvents.emit(CompressionEvent.Complete(compressionResult.newBlock))
                 }
                 is CompressionResult.Failed -> {
@@ -207,17 +210,62 @@ class CompressingChatAgent(
         }
 
         val historySnapshot = synchronized(branch) { branch.messages.toList() }
-        val factsSnapshot =
-            synchronized(branch) { branch.facts.mapValues { (_, v) -> v.toMap() }.toMap() }
+        val factsSnapshot = synchronized(branch) { snapshotWorkingMemory(branch) }
         val factsCount = factsSnapshot.values.sumOf { it.size }
         log(
             "Current messages count: ${historySnapshot.size}, facts=$factsCount (groups=${factsSnapshot.size})"
         )
 
+        val ltmSnapshot = longTermMemoryStore.snapshot()
+        val ltmRecalled = ltmRecaller.recall(userMessage, ltmSnapshot, model)
+        val ltmFiltered =
+            ltmRecalled.filterNot { item ->
+                factsSnapshot[item.category]?.get(item.key)?.value == item.entry.value
+            }
+        val ltmText =
+            if (ltmFiltered.isEmpty()) {
+                ""
+            } else {
+                buildString {
+                    append("[LONG_TERM_MEMORY]\n")
+                    ltmFiltered.groupBy { it.category }.toSortedMap().forEach { (cat, items) ->
+                        append("[${cat.name}]\n")
+                        items.sortedBy { it.key }.forEach { item ->
+                            append(
+                                "${item.key}: ${item.entry.value} (confidence=${"%.2f".format(item.entry.confidence)}, useCount=${item.entry.useCount})\n"
+                            )
+                        }
+                    }
+                    append("[END LONG_TERM_MEMORY]\n")
+                }
+            }
+        if (ltmFiltered.isNotEmpty()) {
+            ltmFiltered.forEach { item ->
+                log(
+                    "MemoryOp: " +
+                            MemoryOperation(
+                                op = "RECALL",
+                                fromLayer = MemoryLayer.LTM,
+                                toLayer = MemoryLayer.WM,
+                                category = item.category,
+                                key = item.key,
+                                value = item.entry.value,
+                                confidence = item.entry.confidence
+                            )
+                )
+            }
+        }
+        val systemPromptWithLtm =
+            if (ltmText.isBlank()) {
+                systemPrompt
+            } else {
+                systemPrompt + "\n\n" + ltmText
+            }
+
         val composedContext =
             contextComposer.compose(
                 sessionId = sessionKey,
-                systemPrompt = systemPrompt,
+                systemPrompt = systemPromptWithLtm,
                 userMessage = userMessage,
                 historyMessages = historySnapshot,
                 facts = factsSnapshot,
@@ -252,14 +300,51 @@ class CompressingChatAgent(
             )
 
         if (result is ChatResult.Success) {
+            val stmOps = mutableListOf<MemoryOperation>()
+            val removed = mutableListOf<Message>()
             synchronized(branch) {
                 branch.messages.add(Message.user(userMessage))
                 branch.messages.add(result.message)
+                stmOps +=
+                    MemoryOperation(
+                        op = "OBSERVE",
+                        fromLayer = null,
+                        toLayer = MemoryLayer.STM,
+                        category = null,
+                        key = "user_message",
+                        value = userMessage,
+                        confidence = 1.0f
+                    )
+                stmOps +=
+                    MemoryOperation(
+                        op = "OBSERVE",
+                        fromLayer = null,
+                        toLayer = MemoryLayer.STM,
+                        category = null,
+                        key = "assistant_message",
+                        value = result.message.content,
+                        confidence = 1.0f
+                    )
                 if (currentConfig.strategy == ContextStrategy.SLIDING_WINDOW) {
                     while (branch.messages.size > currentConfig.keepLastN) {
-                        branch.messages.removeAt(0)
+                        removed += branch.messages.removeAt(0)
                     }
                 }
+            }
+            stmOps.forEach { log("MemoryOp: $it") }
+            removed.forEach { msg ->
+                log(
+                    "MemoryOp: " +
+                            MemoryOperation(
+                                op = "FORGET",
+                                fromLayer = MemoryLayer.STM,
+                                toLayer = null,
+                                category = null,
+                                key = msg.role.name,
+                                value = msg.content,
+                                confidence = 1.0f
+                            )
+                )
             }
         }
 
@@ -372,8 +457,128 @@ class CompressingChatAgent(
 
     fun getFacts(sessionId: String): Map<String, Map<String, String>> {
         val branch = getActiveBranchState(sessionId)
-        return synchronized(branch) { branch.facts.mapValues { (_, v) -> v.toMap() }.toMap() }
+        val wm = synchronized(branch) { snapshotWorkingMemory(branch) }
+        val out = LinkedHashMap<String, Map<String, String>>()
+        wm.forEach { (category, group) ->
+            out[category.name] = group.mapValues { (_, v) -> v.value }
+        }
+        return out
     }
+
+    fun getWorkingMemory(sessionId: String): Map<WmCategory, Map<String, FactEntry>> {
+        val branch = getActiveBranchState(sessionId)
+        return synchronized(branch) { snapshotWorkingMemory(branch) }
+    }
+
+    fun setWorkingMemoryEntry(
+        sessionId: String,
+        category: WmCategory,
+        key: String,
+        value: String,
+        confidence: Float = 1.0f
+    ) {
+        val k = key.trim()
+        val v = value.trim()
+        if (k.isBlank() || v.isBlank()) return
+        val branch = getActiveBranchState(sessionId)
+        val now = System.currentTimeMillis()
+        synchronized(branch) {
+            val group =
+                branch.workingMemory.getOrPut(category) { LinkedHashMap<String, FactEntry>() }
+            val prev = group[k]
+            group[k] =
+                if (prev == null) {
+                    FactEntry(
+                        value = v,
+                        confidence = confidence,
+                        timestamp = now,
+                        source = "manual",
+                        useCount = 0,
+                        lastUsed = now
+                    )
+                } else {
+                    prev.copy(
+                        value = v,
+                        confidence = confidence,
+                        timestamp = now,
+                        source = "manual",
+                        lastUsed = now
+                    )
+                }
+            if (group.isEmpty()) branch.workingMemory.remove(category)
+        }
+    }
+
+    fun deleteWorkingMemoryEntry(sessionId: String, category: WmCategory, key: String): Boolean {
+        val k = key.trim()
+        if (k.isBlank()) return false
+        val branch = getActiveBranchState(sessionId)
+        var removed = false
+        synchronized(branch) {
+            val group = branch.workingMemory[category] ?: return@synchronized
+            removed = group.remove(k) != null
+            if (group.isEmpty()) branch.workingMemory.remove(category)
+        }
+        return removed
+    }
+
+    fun getStmCount(sessionId: String): Int {
+        val branch = getActiveBranchState(sessionId)
+        return synchronized(branch) { branch.messages.size }
+    }
+
+    fun getShortTermMessages(sessionId: String): List<Message> {
+        val branch = getActiveBranchState(sessionId)
+        return synchronized(branch) { branch.messages.toList() }
+    }
+
+    fun clearShortTermMemory(sessionId: String): Int {
+        val branch = getActiveBranchState(sessionId)
+        var n = 0
+        synchronized(branch) {
+            n = branch.messages.size
+            branch.messages.clear()
+        }
+        return n
+    }
+
+    suspend fun getLongTermMemorySnapshot(): List<MemoryItem> = longTermMemoryStore.snapshot()
+
+    suspend fun saveToLtm(
+        category: WmCategory,
+        key: String,
+        value: String,
+        confidence: Float = 1.0f
+    ): Boolean {
+        val k = key.trim()
+        val v = value.trim()
+        if (k.isBlank() || v.isBlank()) return false
+        val item =
+            org.bothubclient.domain.memory.MemoryItem(
+                category = category,
+                key = k,
+                entry =
+                    FactEntry(
+                        value = v,
+                        confidence = confidence,
+                        timestamp = System.currentTimeMillis(),
+                        source = "manual",
+                        useCount = 0,
+                        lastUsed = System.currentTimeMillis(),
+                        ttl = null
+                    )
+            )
+        return longTermMemoryStore.upsert(item)
+    }
+
+    suspend fun deleteFromLtmByKey(key: String): Int {
+        val k = key.trim()
+        if (k.isBlank()) return 0
+        return longTermMemoryStore.deleteWhere { it.key == k }
+    }
+
+    suspend fun findInLtm(query: String, limit: Int = 10): List<MemoryItem> =
+        longTermMemoryStore.search(query, limit)
 
     fun getBranchIds(sessionId: String): List<String> = getSession(sessionId).branches.keys.sorted()
 
@@ -394,13 +599,15 @@ class CompressingChatAgent(
         val size = checkpointSize.coerceIn(0, sourceMessages.size)
         val forkMessages = sourceMessages.take(size)
 
-        val extractor = factsExtractor
-        var forkFacts: LinkedHashMap<String, LinkedHashMap<String, String>> = LinkedHashMap()
+        val forkWm: LinkedHashMap<WmCategory, LinkedHashMap<String, FactEntry>> = LinkedHashMap()
         if (config.enableFactsMemory) {
             forkMessages.filter { it.role == MessageRole.USER }.forEach { m ->
-                val updated = extractor.extractUpdatedGroupsHeuristic(m.content, forkFacts)
-                forkFacts = toMutableGroups(updated)
-                trimFacts(forkFacts, config.maxFacts)
+                val snapshot = snapshotWorkingMemory(forkWm)
+                val ops = factsExtractor.extractOperationsHeuristic(m.content, snapshot)
+                if (ops.isNotEmpty()) {
+                    applyExtractOperations(forkWm, ops)
+                    trimWorkingMemory(forkWm, config.maxFacts)
+                }
             }
         }
 
@@ -413,7 +620,7 @@ class CompressingChatAgent(
         }
 
         session.branches[id] =
-            BranchState(messages = forkMessages.toMutableList(), facts = forkFacts)
+            BranchState(messages = forkMessages.toMutableList(), workingMemory = forkWm)
         log(
             "Branch created: sessionId=$sessionId source=$sourceBranchId checkpointSize=$size -> $id"
         )
@@ -428,8 +635,7 @@ class CompressingChatAgent(
         val branchId = getActiveBranchId(sessionId)
         val branch = getBranch(sessionId, branchId)
         val historySnapshot = synchronized(branch) { branch.messages.toList() }
-        val factsSnapshot =
-            synchronized(branch) { branch.facts.mapValues { (_, v) -> v.toMap() }.toMap() }
+        val factsSnapshot = synchronized(branch) { snapshotWorkingMemory(branch) }
         return contextComposer.compose(
             sessionId = contextKey(sessionId, branchId),
             systemPrompt = systemPrompt,
@@ -440,38 +646,141 @@ class CompressingChatAgent(
         )
     }
 
-    private fun toMutableGroups(
-        groups: Map<String, Map<String, String>>
-    ): LinkedHashMap<String, LinkedHashMap<String, String>> {
-        val out = LinkedHashMap<String, LinkedHashMap<String, String>>()
-        groups.forEach { (category, group) ->
-            val inner = LinkedHashMap<String, String>()
-            group.forEach { (k, v) ->
-                val kk = k.trim()
-                val vv = v.trim()
-                if (kk.isNotBlank() && vv.isNotBlank()) inner[kk] = vv
-            }
-            if (inner.isNotEmpty()) out[category] = inner
+    private fun snapshotWorkingMemory(
+        branch: BranchState
+    ): Map<WmCategory, Map<String, FactEntry>> {
+        return snapshotWorkingMemory(branch.workingMemory)
+    }
+
+    private fun snapshotWorkingMemory(
+        workingMemory: LinkedHashMap<WmCategory, LinkedHashMap<String, FactEntry>>
+    ): Map<WmCategory, Map<String, FactEntry>> {
+        val out = LinkedHashMap<WmCategory, Map<String, FactEntry>>()
+        workingMemory.forEach { (category, group) ->
+            out[category] = group.mapValues { (_, entry) -> entry.copy() }
         }
         return out
     }
 
-    private fun totalFacts(groups: LinkedHashMap<String, LinkedHashMap<String, String>>): Int =
-        groups.values.sumOf { it.size }
-
-    private fun trimFacts(
-        groups: LinkedHashMap<String, LinkedHashMap<String, String>>,
-        maxFacts: Int
+    private fun applyExtractOperations(
+        workingMemory: LinkedHashMap<WmCategory, LinkedHashMap<String, FactEntry>>,
+        ops: List<MemoryOperation>
     ) {
-        while (totalFacts(groups) > maxFacts) {
-            val firstEntry = groups.entries.firstOrNull { it.value.isNotEmpty() } ?: break
-            val firstKey = firstEntry.value.keys.firstOrNull()
-            if (firstKey == null) {
-                groups.remove(firstEntry.key)
-            } else {
-                firstEntry.value.remove(firstKey)
-                if (firstEntry.value.isEmpty()) groups.remove(firstEntry.key)
+        val now = System.currentTimeMillis()
+        ops.forEach { op ->
+            if (op.op != "EXTRACT") return@forEach
+            val category = op.category ?: return@forEach
+            val key = op.key.trim()
+            val value = op.value?.trim().orEmpty()
+            if (key.isBlank() || value.isBlank()) return@forEach
+
+            val group = workingMemory.getOrPut(category) { LinkedHashMap() }
+            val prev = group[key]
+            group[key] =
+                if (prev == null) {
+                    FactEntry(
+                        value = value,
+                        confidence = op.confidence,
+                        timestamp = now,
+                        source = "extract",
+                        useCount = 0,
+                        lastUsed = now
+                    )
+                } else {
+                    prev.copy(
+                        value = value,
+                        confidence = op.confidence,
+                        timestamp = now,
+                        source = "extract",
+                        lastUsed = now,
+                        useCount = prev.useCount
+                    )
+                }
+        }
+        workingMemory.entries.removeIf { it.value.isEmpty() }
+    }
+
+    private suspend fun persistImportantFactsFromWorkingMemory(branch: BranchState, limit: Int) {
+        val snapshot = synchronized(branch) { snapshotWorkingMemory(branch) }
+        val candidates =
+            snapshot.entries
+                .flatMap { (category, group) ->
+                    group.entries.map { (key, entry) -> MemoryItem(category, key, entry) }
+                }
+                .filter { it.entry.value.isNotBlank() && it.key.isNotBlank() }
+                .sortedByDescending {
+                    it.entry.confidence.toDouble() * (it.entry.useCount.toDouble() + 1.0)
+                }
+                .take(limit.coerceIn(1, 100))
+
+        candidates.forEach { item ->
+            val ok = longTermMemoryStore.upsert(item)
+            if (ok) {
+                log(
+                    "MemoryOp: " +
+                            MemoryOperation(
+                                op = "PERSIST",
+                                fromLayer = MemoryLayer.WM,
+                                toLayer = MemoryLayer.LTM,
+                                category = item.category,
+                                key = item.key,
+                                value = item.entry.value,
+                                confidence = item.entry.confidence
+                            )
+                )
             }
         }
+    }
+
+    private fun totalFacts(
+        groups: LinkedHashMap<WmCategory, LinkedHashMap<String, FactEntry>>
+    ): Int = groups.values.sumOf { it.size }
+
+    private fun trimWorkingMemory(
+        groups: LinkedHashMap<WmCategory, LinkedHashMap<String, FactEntry>>,
+        maxFacts: Int
+    ): List<MemoryOperation> {
+        val removed = mutableListOf<MemoryOperation>()
+        while (totalFacts(groups) > maxFacts) {
+            var victimCategory: WmCategory? = null
+            var victimKey: String? = null
+            var victimScore = Double.POSITIVE_INFINITY
+            var victimTimestamp = Long.MAX_VALUE
+            var victimEntry: FactEntry? = null
+
+            groups.forEach { (category, group) ->
+                group.forEach { (key, entry) ->
+                    val score = (entry.confidence.toDouble()) * (entry.useCount.toDouble() + 1.0)
+                    if (score < victimScore ||
+                        (score == victimScore && entry.timestamp < victimTimestamp)
+                    ) {
+                        victimScore = score
+                        victimTimestamp = entry.timestamp
+                        victimCategory = category
+                        victimKey = key
+                        victimEntry = entry
+                    }
+                }
+            }
+
+            val cat = victimCategory ?: break
+            val key = victimKey ?: break
+            val group = groups[cat] ?: break
+            group.remove(key)
+            victimEntry?.let { entry ->
+                removed +=
+                    MemoryOperation(
+                        op = "FORGET",
+                        fromLayer = MemoryLayer.WM,
+                        toLayer = null,
+                        category = cat,
+                        key = key,
+                        value = entry.value,
+                        confidence = entry.confidence
+                    )
+            }
+            if (group.isEmpty()) groups.remove(cat)
+        }
+        return removed
     }
 }

@@ -26,7 +26,13 @@ class FileChatHistoryStorage(
     baseDir: Path = Path.of(System.getProperty("user.home"), ".bothubclient", "chat_history")
 ) : ChatHistoryStorage {
 
-    private val baseDir: Path = baseDir.apply { createDirectories() }
+    private val baseDir: Path =
+        runCatching { baseDir.apply { createDirectories() } }
+            .getOrElse {
+                Path.of(System.getProperty("user.dir"), ".bothubclient", "chat_history").apply {
+                    createDirectories()
+                }
+            }
 
     private val sessionMutexes = mutableMapOf<String, Mutex>()
     private val mutexMapLock = Any()

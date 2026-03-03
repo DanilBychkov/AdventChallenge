@@ -3,10 +3,7 @@ package org.bothubclient.infrastructure.context
 import org.bothubclient.config.ModelContextLimits
 import org.bothubclient.domain.context.ContextComposer
 import org.bothubclient.domain.context.SummaryStorage
-import org.bothubclient.domain.entity.ComposedContext
-import org.bothubclient.domain.entity.ContextConfig
-import org.bothubclient.domain.entity.ContextStrategy
-import org.bothubclient.domain.entity.Message
+import org.bothubclient.domain.entity.*
 import org.bothubclient.infrastructure.logging.AppLogger
 import org.bothubclient.infrastructure.logging.FileLogger
 
@@ -23,7 +20,7 @@ class DefaultContextComposer(private val summaryStorage: SummaryStorage) : Conte
         systemPrompt: String,
         userMessage: String,
         historyMessages: List<Message>,
-        facts: Map<String, Map<String, String>>,
+        facts: Map<WmCategory, Map<String, FactEntry>>,
         config: ContextConfig
     ): ComposedContext {
         log(

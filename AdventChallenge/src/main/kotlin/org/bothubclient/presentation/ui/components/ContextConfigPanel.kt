@@ -21,10 +21,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import org.bothubclient.domain.entity.ContextConfig
-import org.bothubclient.domain.entity.ContextStrategy
-import org.bothubclient.domain.entity.Message
-import org.bothubclient.domain.entity.MessageRole
+import org.bothubclient.domain.entity.*
+import org.bothubclient.domain.memory.MemoryItem
 
 @Composable
 fun ContextConfigPanel(
@@ -32,7 +30,10 @@ fun ContextConfigPanel(
     isExpanded: Boolean,
     onToggle: () -> Unit,
     onStrategyChanged: (ContextStrategy) -> Unit,
-    facts: Map<String, Map<String, String>>,
+    stmCount: Int,
+    workingMemory: Map<WmCategory, Map<String, FactEntry>>,
+    longTermMemory: List<MemoryItem>,
+    onLoadLongTermMemory: () -> Unit,
     branches: List<String>,
     activeBranchId: String,
     checkpointSize: Int,
@@ -90,9 +91,19 @@ fun ContextConfigPanel(
                         enabled = enabled
                     )
 
-                    if (config.strategy == ContextStrategy.STICKY_FACTS) {
-                        FactsPanel(facts = facts, enabled = enabled)
-                    }
+                    ShortTermMemoryPanel(stmCount = stmCount, enabled = enabled)
+
+                    WorkingMemoryPanel(
+                        enabled = enabled,
+                        isEnabledInConfig = config.enableFactsMemory,
+                        workingMemory = workingMemory
+                    )
+
+                    LongTermMemoryPanel(
+                        enabled = enabled,
+                        items = longTermMemory,
+                        onLoad = onLoadLongTermMemory
+                    )
 
                     if (config.strategy == ContextStrategy.BRANCHING) {
                         BranchingControls(
@@ -199,16 +210,43 @@ private fun StrategySelector(
 }
 
 @Composable
-private fun FactsPanel(facts: Map<String, Map<String, String>>, enabled: Boolean) {
+private fun ShortTermMemoryPanel(stmCount: Int, enabled: Boolean) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        val totalFacts = facts.values.sumOf { it.size }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "Сохраненные факты",
+                text = "STM (сообщения)",
+                fontSize = 12.sp,
+                color = if (enabled) Color.White else Color.Gray
+            )
+            Text(
+                text = stmCount.toString(),
+                fontSize = 11.sp,
+                color = MaterialTheme.colors.secondary,
+                fontWeight = FontWeight.Medium
+            )
+        }
+    }
+}
+
+@Composable
+private fun WorkingMemoryPanel(
+    enabled: Boolean,
+    isEnabledInConfig: Boolean,
+    workingMemory: Map<WmCategory, Map<String, FactEntry>>
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        val totalFacts = workingMemory.values.sumOf { it.size }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "WM (факты)",
                 fontSize = 12.sp,
                 color = if (enabled) Color.White else Color.Gray
             )
@@ -220,20 +258,89 @@ private fun FactsPanel(facts: Map<String, Map<String, String>>, enabled: Boolean
             )
         }
 
-        if (facts.isEmpty()) {
+        if (!isEnabledInConfig) {
+            Text(text = "Выключено в настройках", fontSize = 11.sp, color = Color.Gray)
+            return@Column
+        }
+
+        if (workingMemory.isEmpty()) {
             Text(text = "Фактов нет", fontSize = 11.sp, color = Color.Gray)
         } else {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                facts.toSortedMap().forEach { (category, group) ->
+                workingMemory.toSortedMap().forEach { (category, group) ->
                     if (group.isEmpty()) return@forEach
                     Text(
-                        text = category,
+                        text = category.name,
                         fontSize = 11.sp,
                         color = Color.White,
                         fontWeight = FontWeight.Medium
                     )
-                    group.toSortedMap().forEach { (key, value) ->
-                        Text(text = "$key: $value", fontSize = 11.sp, color = Color(0xFFB0B0B0))
+                    group.toSortedMap().forEach { (key, entry) ->
+                        val c = "%.2f".format(entry.confidence)
+                        Text(
+                            text = "$key: ${entry.value} (c=$c, u=${entry.useCount})",
+                            fontSize = 11.sp,
+                            color = Color(0xFFB0B0B0)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LongTermMemoryPanel(enabled: Boolean, items: List<MemoryItem>, onLoad: () -> Unit) {
+    val expanded = remember { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(
+            modifier =
+                Modifier.fillMaxWidth().clickable(enabled = enabled) {
+                    val next = !expanded.value
+                    expanded.value = next
+                    if (next) onLoad()
+                },
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = if (expanded.value) "LTM (показать меньше)" else "LTM (показать)",
+                fontSize = 12.sp,
+                color = if (enabled) Color.White else Color.Gray
+            )
+            Text(
+                text = items.size.toString(),
+                fontSize = 11.sp,
+                color = MaterialTheme.colors.secondary,
+                fontWeight = FontWeight.Medium
+            )
+        }
+
+        AnimatedVisibility(
+            visible = expanded.value,
+            enter = expandVertically(),
+            exit = shrinkVertically()
+        ) {
+            if (items.isEmpty()) {
+                Text(text = "Долгосрочной памяти нет", fontSize = 11.sp, color = Color.Gray)
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    items.groupBy { it.category }.toSortedMap().forEach { (cat, group) ->
+                        Text(
+                            text = cat.name,
+                            fontSize = 11.sp,
+                            color = Color.White,
+                            fontWeight = FontWeight.Medium
+                        )
+                        group.sortedBy { it.key }.forEach { item ->
+                            val c = "%.2f".format(item.entry.confidence)
+                            Text(
+                                text =
+                                    "${item.key}: ${item.entry.value} (c=$c, u=${item.entry.useCount})",
+                                fontSize = 11.sp,
+                                color = Color(0xFFB0B0B0)
+                            )
+                        }
                     }
                 }
             }

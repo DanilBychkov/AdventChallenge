@@ -1,8 +1,6 @@
 package org.bothubclient.domain.context
 
-import org.bothubclient.domain.entity.ComposedContext
-import org.bothubclient.domain.entity.ContextConfig
-import org.bothubclient.domain.entity.Message
+import org.bothubclient.domain.entity.*
 
 interface ContextComposer {
     fun compose(
@@ -10,7 +8,7 @@ interface ContextComposer {
         systemPrompt: String,
         userMessage: String,
         historyMessages: List<Message>,
-        facts: Map<String, Map<String, String>>,
+        facts: Map<WmCategory, Map<String, FactEntry>>,
         config: ContextConfig
     ): ComposedContext
 
