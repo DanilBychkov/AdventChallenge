@@ -12,6 +12,7 @@ import org.bothubclient.domain.entity.*
 import org.bothubclient.domain.memory.MemoryItem
 import org.bothubclient.infrastructure.agent.CompressingChatAgent
 import org.bothubclient.infrastructure.logging.FileLogger
+import org.bothubclient.infrastructure.repository.UserProfileRepository
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -25,6 +26,7 @@ class ChatViewModel(
     private val getChatHistoryUseCase: GetChatHistoryUseCase,
     private val getSessionMessagesUseCase: GetSessionMessagesUseCase,
     private val getTokenStatisticsUseCase: GetTokenStatisticsUseCase,
+    private val userProfileRepository: UserProfileRepository,
     private val compressingChatAgent: CompressingChatAgent? = null
 ) {
 
@@ -99,6 +101,22 @@ class ChatViewModel(
     var lastCompressionError by mutableStateOf<String?>(null)
         private set
 
+    var userProfile by mutableStateOf<UserProfile?>(null)
+        private set
+
+    var userProfiles by mutableStateOf<List<UserProfile>>(emptyList())
+        private set
+
+    /** null означает режим "Без профиля" */
+    var activeUserProfileId by mutableStateOf<String?>(null)
+        private set
+
+    var isSavingUserProfile by mutableStateOf(false)
+        private set
+
+    var userProfileError by mutableStateOf<String?>(null)
+        private set
+
     val effectivePromptText: String
         get() {
             return if (selectedPrompt.isCustom) {
@@ -151,6 +169,95 @@ class ChatViewModel(
             isHistoryLoaded = true
         }
     }
+
+    fun loadUserProfile(scope: CoroutineScope) {
+        scope.launch {
+            runCatching { userProfileRepository.loadProfiles() }
+                .onSuccess { profiles ->
+                    userProfiles = profiles
+                    val active = profiles.firstOrNull { it.isActive }
+                    activeUserProfileId = active?.id
+                    userProfile = active
+                    userProfileError = null
+                }
+                .onFailure { e -> userProfileError = e.message }
+        }
+    }
+
+    fun saveUserProfile(scope: CoroutineScope, profile: UserProfile) {
+        if (isSavingUserProfile) return
+        scope.launch {
+            isSavingUserProfile = true
+            userProfileError = null
+            runCatching { userProfileRepository.upsertAndActivate(profile) }
+                .onSuccess {
+                    userProfile = it
+                    activeUserProfileId = it.id
+                    statusMessage = "Профиль сохранён"
+                    // Обновляем список профилей/флаги активного.
+                    runCatching { userProfileRepository.loadProfiles() }.onSuccess { profiles ->
+                        userProfiles = profiles
+                    }
+                }
+                .onFailure { e ->
+                    userProfileError = e.message
+                    statusMessage = "Ошибка сохранения профиля"
+                }
+            isSavingUserProfile = false
+        }
+    }
+
+    fun onUserProfileSelected(scope: CoroutineScope, profileId: String?) {
+        if (isSavingUserProfile) return
+
+        // Защита от "битого" выбора из UI: если id не найден, лучше не менять состояние.
+        if (profileId != null && userProfiles.none { it.id == profileId }) {
+            statusMessage = "Ошибка: профиль не найден"
+            return
+        }
+
+        scope.launch {
+            runCatching { userProfileRepository.setActiveProfile(profileId) }
+                .onSuccess {
+                    // Рефрешим список, чтобы UI корректно подсветил активный флаг.
+                    runCatching { userProfileRepository.loadProfiles() }
+                        .onSuccess { profiles ->
+                            userProfiles = profiles
+                            val active = profiles.firstOrNull { it.isActive }
+                            activeUserProfileId = active?.id
+                            userProfile = active
+                            statusMessage =
+                                if (active == null) "Режим: Без профиля"
+                                else "Профиль: ${active.name}"
+                            refreshContextMessages()
+                        }
+                        .onFailure { e -> userProfileError = e.message }
+                }
+                .onFailure { e ->
+                    userProfileError = e.message
+                    statusMessage = "Ошибка переключения профиля"
+                }
+        }
+    }
+
+    val userProfileDropdownItems: List<ProfileDropdownItem>
+        get() {
+            val base = listOf(ProfileDropdownItem(id = null, title = "Без профиля"))
+            val rest =
+                userProfiles.sortedBy { it.name.lowercase() }.map {
+                    ProfileDropdownItem(
+                        id = it.id,
+                        title = it.name.ifBlank { "(без названия)" }
+                    )
+                }
+            return base + rest
+        }
+
+    val selectedUserProfileDropdownItem: ProfileDropdownItem
+        get() {
+            return userProfileDropdownItems.firstOrNull { it.id == activeUserProfileId }
+                ?: userProfileDropdownItems.first()
+        }
 
     private fun updateTokenStatistics() {
         tokenStatistics = getTokenStatisticsUseCase(selectedModel)
@@ -409,13 +516,11 @@ class ChatViewModel(
                                 )
                             messages = messages + Message.system(msg)
                         }
-
                         "hide" -> {
                             isMemoryPanelVisible = false
                             val msg = jsonString(emptyList(), "none", "✓ Memory Panel скрыта")
                             messages = messages + Message.system(msg)
                         }
-
                         "toggle" -> {
                             isMemoryPanelVisible = !isMemoryPanelVisible
                             val action = if (isMemoryPanelVisible) "memory_panel" else "none"
@@ -429,7 +534,6 @@ class ChatViewModel(
                     return true
                 }
             }
-
             "!stm" -> {
                 if (parts.size >= 2 && parts[1].lowercase() == "clear") {
                     val agent = compressingChatAgent
@@ -475,7 +579,6 @@ class ChatViewModel(
                     return true
                 }
             }
-
             "!wm" -> {
                 if (parts.size >= 2) {
                     when (parts[1].lowercase()) {
@@ -554,7 +657,6 @@ class ChatViewModel(
                             }
                             return true
                         }
-
                         "get" -> {
                             if (parts.size >= 4) {
                                 val category = tryParseCategory(parts[2])
@@ -585,7 +687,6 @@ class ChatViewModel(
                                 return true
                             }
                         }
-
                         "delete" -> {
                             if (parts.size >= 4) {
                                 val category = tryParseCategory(parts[2])
@@ -637,7 +738,6 @@ class ChatViewModel(
                                 return true
                             }
                         }
-
                         "list" -> {
                             if (parts.size == 2) {
                                 val count = workingMemory.values.sumOf { it.size }
@@ -675,7 +775,6 @@ class ChatViewModel(
                     }
                 }
             }
-
             "!ltm" -> {
                 if (parts.size >= 2) {
                     when (parts[1].lowercase()) {
@@ -728,7 +827,6 @@ class ChatViewModel(
                             }
                             return true
                         }
-
                         "find" -> {
                             val query = text.substringAfter("!ltm find").trim()
                             if (query.isBlank()) {
@@ -759,7 +857,6 @@ class ChatViewModel(
                             }
                             return true
                         }
-
                         "delete" -> {
                             val key = text.substringAfter("!ltm delete").trim()
                             if (key.isBlank()) {
@@ -922,9 +1019,13 @@ class ChatViewModel(
                 getTokenStatisticsUseCase =
                     org.bothubclient.infrastructure.di.ServiceLocator
                         .getTokenStatisticsUseCase,
+                userProfileRepository =
+                    org.bothubclient.infrastructure.di.ServiceLocator.userProfileRepository,
                 compressingChatAgent =
                     org.bothubclient.infrastructure.di.ServiceLocator.compressingChatAgent
             )
         }
     }
 }
+
+data class ProfileDropdownItem(val id: String?, val title: String)

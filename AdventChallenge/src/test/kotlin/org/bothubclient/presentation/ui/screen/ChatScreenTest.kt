@@ -6,10 +6,8 @@ import io.mockk.*
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import org.bothubclient.application.usecase.*
 import org.bothubclient.config.SystemPrompt
-import org.bothubclient.domain.entity.ChatResult
-import org.bothubclient.domain.entity.Message
-import org.bothubclient.domain.entity.RequestMetrics
-import org.bothubclient.domain.entity.SessionTokenStatistics
+import org.bothubclient.domain.entity.*
+import org.bothubclient.infrastructure.repository.UserProfileRepository
 import org.bothubclient.presentation.viewmodel.ChatViewModel
 import org.junit.After
 import org.junit.Before
@@ -31,6 +29,7 @@ class ChatScreenTest {
     private val getChatHistoryUseCase: GetChatHistoryUseCase = mockk()
     private val getSessionMessagesUseCase: GetSessionMessagesUseCase = mockk()
     private val getTokenStatisticsUseCase: GetTokenStatisticsUseCase = mockk()
+    private val userProfileRepository: UserProfileRepository = mockk()
 
     private lateinit var viewModel: ChatViewModel
     private val testDispatcher = UnconfinedTestDispatcher()
@@ -51,6 +50,7 @@ class ChatScreenTest {
         coEvery { getSessionMessagesUseCase() } returns emptyList()
         coEvery { resetChatSessionUseCase() } just Runs
         every { getTokenStatisticsUseCase(any()) } returns SessionTokenStatistics.EMPTY
+        coEvery { userProfileRepository.loadProfiles() } returns listOf(UserProfileDefaults.DEFAULT_PROFILE)
 
         viewModel = ChatViewModel(
             sendMessageUseCase = sendMessageUseCase,
@@ -61,7 +61,8 @@ class ChatScreenTest {
             resetChatSessionUseCase = resetChatSessionUseCase,
             getChatHistoryUseCase = getChatHistoryUseCase,
             getSessionMessagesUseCase = getSessionMessagesUseCase,
-            getTokenStatisticsUseCase = getTokenStatisticsUseCase
+            getTokenStatisticsUseCase = getTokenStatisticsUseCase,
+            userProfileRepository = userProfileRepository
         )
     }
 

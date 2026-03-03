@@ -11,11 +11,13 @@ import org.bothubclient.domain.context.SummaryStorage
 import org.bothubclient.domain.entity.*
 import org.bothubclient.domain.memory.LongTermMemoryStore
 import org.bothubclient.domain.memory.MemoryItem
+import org.bothubclient.domain.usecase.UserProfilePromptBuilder
 import org.bothubclient.infrastructure.context.HeuristicFactsExtractor
 import org.bothubclient.infrastructure.logging.AppLogger
 import org.bothubclient.infrastructure.logging.FileLogger
 import org.bothubclient.infrastructure.memory.FileLongTermMemoryStore
 import org.bothubclient.infrastructure.memory.LtmRecaller
+import org.bothubclient.infrastructure.repository.UserProfileRepository
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicReference
 
@@ -33,12 +35,14 @@ class CompressingChatAgent(
     private val factsExtractor: HeuristicFactsExtractor = HeuristicFactsExtractor(),
     private val ltmRecaller: LtmRecaller,
     private val longTermMemoryStore: LongTermMemoryStore = FileLongTermMemoryStore(),
+    private val userProfileRepository: UserProfileRepository? = null,
+    private val userProfilePromptBuilder: UserProfilePromptBuilder = UserProfilePromptBuilder(),
     initialConfig: ContextConfig = ContextConfig.DEFAULT
 ) : ChatAgent {
 
     private data class SessionState(
         var activeBranchId: String = "main",
-        val branches: MutableMap<String, BranchState> = mutableMapOf("main" to BranchState())
+        val branches: MutableMap<String, BranchState>
     )
 
     private val sessions = ConcurrentHashMap<String, SessionState>()
@@ -60,10 +64,17 @@ class CompressingChatAgent(
     private fun section(title: String) = FileLogger.section(title)
 
     private fun getSession(sessionId: String): SessionState =
-        sessions.computeIfAbsent(sessionId) { SessionState() }
+        sessions.computeIfAbsent(sessionId) {
+            val activeProfile = userProfileRepository?.getCachedActiveProfile()
+            SessionState(
+                branches = mutableMapOf("main" to BranchState(userProfile = activeProfile))
+            )
+        }
 
     private fun getBranch(sessionId: String, branchId: String): BranchState =
-        getSession(sessionId).branches.getOrPut(branchId) { BranchState() }
+        getSession(sessionId).branches.getOrPut(branchId) {
+            BranchState(userProfile = userProfileRepository?.getCachedActiveProfile())
+        }
 
     private fun getActiveBranchState(sessionId: String): BranchState {
         val session = getSession(sessionId)
@@ -167,6 +178,22 @@ class CompressingChatAgent(
         log("sessionId=$sessionId, branchId=$branchId, model=$model")
         log("Config: $currentConfig")
 
+        val cachedProfile = userProfileRepository?.getCachedActiveProfile()
+        // Важно: профиль может быть null (режим "Без профиля") — в этом случае очищаем профиль
+        // ветки,
+        // иначе он "залипнет" со старого выбора.
+        synchronized(branch) { branch.userProfile = cachedProfile }
+        val profilePrompt =
+            synchronized(branch) { branch.userProfile }
+                ?.let { userProfilePromptBuilder.build(it) }
+                .orEmpty()
+        val systemPromptWithProfile =
+            if (profilePrompt.isBlank()) {
+                systemPrompt
+            } else {
+                systemPrompt + "\n\n" + profilePrompt
+            }
+
         if (currentConfig.enableFactsMemory) {
             val existingWm = synchronized(branch) { snapshotWorkingMemory(branch) }
             val ops = factsExtractor.extractOperations(userMessage, existingWm)
@@ -257,9 +284,9 @@ class CompressingChatAgent(
         }
         val systemPromptWithLtm =
             if (ltmText.isBlank()) {
-                systemPrompt
+                systemPromptWithProfile
             } else {
-                systemPrompt + "\n\n" + ltmText
+                systemPromptWithProfile + "\n\n" + ltmText
             }
 
         val composedContext =
@@ -596,6 +623,7 @@ class CompressingChatAgent(
         val sourceBranchId = session.activeBranchId
         val sourceBranch = getBranch(sessionId, sourceBranchId)
         val sourceMessages = synchronized(sourceBranch) { sourceBranch.messages.toList() }
+        val sourceProfile = synchronized(sourceBranch) { sourceBranch.userProfile }
         val size = checkpointSize.coerceIn(0, sourceMessages.size)
         val forkMessages = sourceMessages.take(size)
 
@@ -620,7 +648,11 @@ class CompressingChatAgent(
         }
 
         session.branches[id] =
-            BranchState(messages = forkMessages.toMutableList(), workingMemory = forkWm)
+            BranchState(
+                messages = forkMessages.toMutableList(),
+                workingMemory = forkWm,
+                userProfile = sourceProfile
+            )
         log(
             "Branch created: sessionId=$sessionId source=$sourceBranchId checkpointSize=$size -> $id"
         )
@@ -634,11 +666,19 @@ class CompressingChatAgent(
     ): ComposedContext {
         val branchId = getActiveBranchId(sessionId)
         val branch = getBranch(sessionId, branchId)
+        val cachedProfile = userProfileRepository?.getCachedActiveProfile()
+        synchronized(branch) { branch.userProfile = cachedProfile }
+        val profilePrompt =
+            synchronized(branch) { branch.userProfile }
+                ?.let { userProfilePromptBuilder.build(it) }
+                .orEmpty()
+        val systemPromptWithProfile =
+            if (profilePrompt.isBlank()) systemPrompt else systemPrompt + "\n\n" + profilePrompt
         val historySnapshot = synchronized(branch) { branch.messages.toList() }
         val factsSnapshot = synchronized(branch) { snapshotWorkingMemory(branch) }
         return contextComposer.compose(
             sessionId = contextKey(sessionId, branchId),
-            systemPrompt = systemPrompt,
+            systemPrompt = systemPromptWithProfile,
             userMessage = userMessage,
             historyMessages = historySnapshot,
             facts = factsSnapshot,

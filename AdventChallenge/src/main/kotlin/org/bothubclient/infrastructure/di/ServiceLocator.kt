@@ -19,6 +19,8 @@ import org.bothubclient.infrastructure.config.EnvironmentApiKeyProvider
 import org.bothubclient.infrastructure.context.*
 import org.bothubclient.infrastructure.memory.LtmRecaller
 import org.bothubclient.infrastructure.persistence.FileChatHistoryStorage
+import org.bothubclient.infrastructure.persistence.UserProfileStorage
+import org.bothubclient.infrastructure.repository.UserProfileRepository
 
 object ServiceLocator {
     private val httpClient: HttpClient by lazy {
@@ -37,6 +39,12 @@ object ServiceLocator {
     private val apiKeyProvider: ApiKeyProvider by lazy { EnvironmentApiKeyProvider() }
 
     private val chatHistoryStorage: ChatHistoryStorage by lazy { FileChatHistoryStorage() }
+
+    private val userProfileStorage: UserProfileStorage by lazy { UserProfileStorage() }
+
+    val userProfileRepository: UserProfileRepository by lazy {
+        UserProfileRepository(storage = userProfileStorage)
+    }
 
     private val statelessChatRepository: ChatRepository by lazy {
         BothubChatRepository(httpClient) { apiKeyProvider.getApiKey() }
@@ -75,7 +83,8 @@ object ServiceLocator {
             summaryStorage = summaryStorage,
             contextComposer = contextComposer,
             factsExtractor = factsExtractor,
-            ltmRecaller = ltmRecaller
+            ltmRecaller = ltmRecaller,
+            userProfileRepository = userProfileRepository
         )
     }
 

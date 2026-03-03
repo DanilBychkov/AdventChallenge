@@ -11,6 +11,7 @@ import org.bothubclient.domain.entity.Message
 import org.bothubclient.domain.entity.RequestMetrics
 import org.bothubclient.domain.entity.SessionTokenStatistics
 import org.bothubclient.infrastructure.context.HeuristicFactsExtractor
+import org.bothubclient.infrastructure.repository.UserProfileRepository
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import kotlin.test.*
@@ -30,6 +31,7 @@ class ChatViewModelTest {
     private val getChatHistoryUseCase: GetChatHistoryUseCase = mockk()
     private val getSessionMessagesUseCase: GetSessionMessagesUseCase = mockk()
     private val getTokenStatisticsUseCase: GetTokenStatisticsUseCase = mockk()
+    private val userProfileRepository: UserProfileRepository = mockk()
 
     private val testDispatcher = StandardTestDispatcher()
 
@@ -61,7 +63,8 @@ class ChatViewModelTest {
                 resetChatSessionUseCase = resetChatSessionUseCase,
                 getChatHistoryUseCase = getChatHistoryUseCase,
                 getSessionMessagesUseCase = getSessionMessagesUseCase,
-                getTokenStatisticsUseCase = getTokenStatisticsUseCase
+                getTokenStatisticsUseCase = getTokenStatisticsUseCase,
+                userProfileRepository = userProfileRepository
             )
     }
 

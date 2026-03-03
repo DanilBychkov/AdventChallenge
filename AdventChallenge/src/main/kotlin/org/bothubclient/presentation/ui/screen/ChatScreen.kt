@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CoroutineScope
 import org.bothubclient.domain.entity.ContextStrategy
 import org.bothubclient.domain.entity.Message
+import org.bothubclient.domain.entity.UserProfileDefaults
 import org.bothubclient.infrastructure.config.PanelSizePreferences
 import org.bothubclient.presentation.ui.components.*
 import org.bothubclient.presentation.ui.theme.BothubTheme
@@ -29,8 +30,10 @@ import org.bothubclient.presentation.viewmodel.ChatViewModel
 fun ChatScreen(viewModel: ChatViewModel, coroutineScope: CoroutineScope) {
     var modelDropdownExpanded by remember { mutableStateOf(false) }
     var promptDropdownExpanded by remember { mutableStateOf(false) }
+    var profileDropdownExpanded by remember { mutableStateOf(false) }
     val scrollState = rememberScrollState()
     val promptScrollState = rememberScrollState()
+    var isProfileEditorOpen by rememberSaveable { mutableStateOf(false) }
 
     var promptPanelHeight by remember {
         mutableStateOf(PanelSizePreferences.promptPanelHeight.dp)
@@ -48,6 +51,7 @@ fun ChatScreen(viewModel: ChatViewModel, coroutineScope: CoroutineScope) {
     LaunchedEffect(Unit) {
         viewModel.loadHistory(this)
         viewModel.loadLongTermMemory(this)
+        viewModel.loadUserProfile(this)
     }
 
     LaunchedEffect(viewModel.messages.size) { scrollState.scrollTo(scrollState.maxValue) }
@@ -59,12 +63,33 @@ fun ChatScreen(viewModel: ChatViewModel, coroutineScope: CoroutineScope) {
                     .background(MaterialTheme.colors.background)
                     .padding(16.dp)
         ) {
+            if (isProfileEditorOpen) {
+                ProfileEditorDialog(
+                    profile = viewModel.userProfile
+                        ?: UserProfileDefaults.DEFAULT_PROFILE,
+                    isSaving = viewModel.isSavingUserProfile,
+                    error = viewModel.userProfileError,
+                    onSave = {
+                        viewModel.saveUserProfile(coroutineScope, it)
+                        isProfileEditorOpen = false
+                    },
+                    onClose = { isProfileEditorOpen = false }
+                )
+            }
             Header(
                 title = "Bothub Chat Client",
                 showReset = viewModel.messages.isNotEmpty(),
                 onReset = { viewModel.resetSession(coroutineScope) },
                 isSidePanelVisible = isSidePanelVisible,
-                onToggleSidePanel = { isSidePanelVisible = !isSidePanelVisible }
+                onToggleSidePanel = { isSidePanelVisible = !isSidePanelVisible },
+                profileItems = viewModel.userProfileDropdownItems,
+                selectedProfileItem = viewModel.selectedUserProfileDropdownItem,
+                profileDropdownExpanded = profileDropdownExpanded,
+                onProfileDropdownExpandedChange = { profileDropdownExpanded = it },
+                onProfileSelected = { item ->
+                    viewModel.onUserProfileSelected(coroutineScope, item.id)
+                },
+                onOpenProfile = { isProfileEditorOpen = true }
             )
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -799,7 +824,13 @@ private fun Header(
     showReset: Boolean = false,
     onReset: () -> Unit = {},
     isSidePanelVisible: Boolean,
-    onToggleSidePanel: () -> Unit
+    onToggleSidePanel: () -> Unit,
+    profileItems: List<org.bothubclient.presentation.viewmodel.ProfileDropdownItem>,
+    selectedProfileItem: org.bothubclient.presentation.viewmodel.ProfileDropdownItem,
+    profileDropdownExpanded: Boolean,
+    onProfileDropdownExpandedChange: (Boolean) -> Unit,
+    onProfileSelected: (org.bothubclient.presentation.viewmodel.ProfileDropdownItem) -> Unit,
+    onOpenProfile: () -> Unit
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
@@ -816,6 +847,20 @@ private fun Header(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            ProfileDropdown(
+                items = profileItems,
+                selected = selectedProfileItem,
+                expanded = profileDropdownExpanded,
+                onExpandedChange = onProfileDropdownExpandedChange,
+                onSelected = onProfileSelected
+            )
+            IconButton(onClick = onOpenProfile) {
+                Icon(
+                    imageVector = Icons.Default.Person,
+                    contentDescription = "Открыть профиль",
+                    tint = MaterialTheme.colors.secondary
+                )
+            }
             IconButton(onClick = onToggleSidePanel) {
                 Icon(
                     imageVector =
@@ -830,6 +875,71 @@ private fun Header(
             }
             if (showReset) {
                 ResetButton(enabled = true, onClick = onReset)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProfileDropdown(
+    items: List<org.bothubclient.presentation.viewmodel.ProfileDropdownItem>,
+    selected: org.bothubclient.presentation.viewmodel.ProfileDropdownItem,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+    onSelected: (org.bothubclient.presentation.viewmodel.ProfileDropdownItem) -> Unit,
+    enabled: Boolean = true
+) {
+    Box {
+        OutlinedButton(
+            onClick = { onExpandedChange(true) },
+            enabled = enabled,
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+            shape = RoundedCornerShape(10.dp)
+        ) {
+            Text(
+                text = "Профиль: ${selected.title}",
+                fontSize = 12.sp,
+                color = if (enabled) MaterialTheme.colors.secondary else Color.Gray
+            )
+            Spacer(Modifier.width(6.dp))
+            Icon(
+                imageVector = Icons.Default.ArrowDropDown,
+                contentDescription = "Выбрать профиль",
+                tint = if (enabled) MaterialTheme.colors.secondary else Color.Gray,
+                modifier = Modifier.size(16.dp)
+            )
+        }
+
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { onExpandedChange(false) },
+            modifier = Modifier.background(MaterialTheme.colors.surface).width(280.dp)
+        ) {
+            items.forEach { item ->
+                val isSelected = item.id == selected.id
+                DropdownMenuItem(
+                    onClick = {
+                        onSelected(item)
+                        onExpandedChange(false)
+                    },
+                    modifier =
+                        Modifier.background(
+                            if (isSelected)
+                                MaterialTheme.colors.primary.copy(
+                                    alpha = 0.2f
+                                )
+                            else MaterialTheme.colors.surface
+                        )
+                ) {
+                    Text(
+                        text = item.title,
+                        fontSize = 13.sp,
+                        color =
+                            if (isSelected)
+                                MaterialTheme.colors.secondary
+                            else MaterialTheme.colors.onSurface
+                    )
+                }
             }
         }
     }
