@@ -4,5 +4,6 @@ data class BranchState(
     val messages: MutableList<Message> = mutableListOf(),
     val workingMemory: LinkedHashMap<WmCategory, LinkedHashMap<String, FactEntry>> =
         LinkedHashMap(),
-    var userProfile: UserProfile? = null
+    var userProfile: UserProfile? = null,
+    var taskContext: TaskContext? = null
 )

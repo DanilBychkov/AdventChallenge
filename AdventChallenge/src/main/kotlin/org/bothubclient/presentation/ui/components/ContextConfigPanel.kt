@@ -316,6 +316,21 @@ private fun LongTermMemoryPanel(enabled: Boolean, items: List<MemoryItem>, onLoa
             )
         }
 
+        if (expanded.value) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                Text(
+                    text = "Обновить",
+                    fontSize = 11.sp,
+                    color = if (enabled) MaterialTheme.colors.secondary else Color.Gray,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.clickable(enabled = enabled) { onLoad() }
+                )
+            }
+        }
+
         AnimatedVisibility(
             visible = expanded.value,
             enter = expandVertically(),

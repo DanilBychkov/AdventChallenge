@@ -14,11 +14,13 @@ import org.bothubclient.domain.repository.ChatRepository
 import org.bothubclient.infrastructure.agent.AgentBackedChatRepository
 import org.bothubclient.infrastructure.agent.BothubChatAgent
 import org.bothubclient.infrastructure.agent.CompressingChatAgent
+import org.bothubclient.infrastructure.agent.StateMachineAwareAgent
 import org.bothubclient.infrastructure.api.BothubChatRepository
 import org.bothubclient.infrastructure.config.EnvironmentApiKeyProvider
 import org.bothubclient.infrastructure.context.*
 import org.bothubclient.infrastructure.memory.LtmRecaller
 import org.bothubclient.infrastructure.persistence.FileChatHistoryStorage
+import org.bothubclient.infrastructure.persistence.FileTaskContextStorage
 import org.bothubclient.infrastructure.persistence.UserProfileStorage
 import org.bothubclient.infrastructure.repository.UserProfileRepository
 
@@ -41,6 +43,8 @@ object ServiceLocator {
     private val chatHistoryStorage: ChatHistoryStorage by lazy { FileChatHistoryStorage() }
 
     private val userProfileStorage: UserProfileStorage by lazy { UserProfileStorage() }
+
+    private val taskContextStorage: FileTaskContextStorage by lazy { FileTaskContextStorage() }
 
     val userProfileRepository: UserProfileRepository by lazy {
         UserProfileRepository(storage = userProfileStorage)
@@ -84,11 +88,12 @@ object ServiceLocator {
             contextComposer = contextComposer,
             factsExtractor = factsExtractor,
             ltmRecaller = ltmRecaller,
-            userProfileRepository = userProfileRepository
+            userProfileRepository = userProfileRepository,
+            taskContextStorage = taskContextStorage
         )
     }
 
-    private val chatAgent: ChatAgent by lazy { compressingChatAgent }
+    private val chatAgent: ChatAgent by lazy { StateMachineAwareAgent(compressingChatAgent) }
 
     private val chatRepository: ChatRepository by lazy {
         AgentBackedChatRepository(agent = chatAgent, sessionId = "chat-ui")

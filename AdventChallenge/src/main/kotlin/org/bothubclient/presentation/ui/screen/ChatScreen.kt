@@ -545,6 +545,14 @@ private fun ChatSidePanelState(
                     onToggle = onStatsToggle
                 )
 
+        TaskStatePanel(
+            taskContext = viewModel.taskContext,
+            enabled = !viewModel.isLoading,
+            onApprovePlan = { viewModel.approveTaskPlan(coroutineScope) },
+            onApproveValidation = { viewModel.approveTaskValidation(coroutineScope) },
+            onReset = { viewModel.resetTask(coroutineScope) }
+        )
+
                 if (viewModel.summaryBlocks.isNotEmpty()) {
                     SummaryPanel(summaryBlocks = viewModel.summaryBlocks)
                 }

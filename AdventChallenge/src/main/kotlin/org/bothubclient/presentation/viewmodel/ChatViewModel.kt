@@ -107,6 +107,9 @@ class ChatViewModel(
     var userProfiles by mutableStateOf<List<UserProfile>>(emptyList())
         private set
 
+    var taskContext by mutableStateOf<TaskContext?>(null)
+        private set
+
     /** null означает режим "Без профиля" */
     var activeUserProfileId by mutableStateOf<String?>(null)
         private set
@@ -337,8 +340,66 @@ class ChatViewModel(
             workingMemory = agent.getWorkingMemory("chat-ui")
             stmCount = agent.getStmCount("chat-ui")
             shortTermMessages = agent.getShortTermMessages("chat-ui")
+            taskContext = agent.getTaskContextSnapshot("chat-ui")
             val totalFacts = workingMemory.values.sumOf { it.size }
             log("Updated memory: stm=$stmCount wmGroups=${workingMemory.size} wmFacts=$totalFacts")
+        }
+    }
+
+    fun approveTaskPlan(scope: CoroutineScope) {
+        val agent = compressingChatAgent ?: return
+        if (isLoading) return
+        isLoading = true
+        statusMessage = "Утверждение плана..."
+        scope.launch {
+            runCatching { agent.approveTaskPlan("chat-ui") }
+                .onSuccess {
+                    refreshBranchState()
+                    statusMessage = "План утверждён"
+                }
+                .onFailure { e ->
+                    statusMessage = "Ошибка утверждения плана"
+                    log("approveTaskPlan failed: ${e.message}")
+                }
+            isLoading = false
+        }
+    }
+
+    fun approveTaskValidation(scope: CoroutineScope) {
+        val agent = compressingChatAgent ?: return
+        if (isLoading) return
+        isLoading = true
+        statusMessage = "Подтверждение завершения..."
+        scope.launch {
+            runCatching { agent.approveTaskValidation("chat-ui") }
+                .onSuccess {
+                    refreshBranchState()
+                    statusMessage = "Задача завершена"
+                }
+                .onFailure { e ->
+                    statusMessage = "Ошибка завершения задачи"
+                    log("approveTaskValidation failed: ${e.message}")
+                }
+            isLoading = false
+        }
+    }
+
+    fun resetTask(scope: CoroutineScope) {
+        val agent = compressingChatAgent ?: return
+        if (isLoading) return
+        isLoading = true
+        statusMessage = "Сброс задачи..."
+        scope.launch {
+            runCatching { agent.resetTask("chat-ui") }
+                .onSuccess {
+                    refreshBranchState()
+                    statusMessage = "Задача сброшена"
+                }
+                .onFailure { e ->
+                    statusMessage = "Ошибка сброса задачи"
+                    log("resetTask failed: ${e.message}")
+                }
+            isLoading = false
         }
     }
 
@@ -971,6 +1032,9 @@ class ChatViewModel(
                     updateTokenStatistics()
                     updateSummaryBlocks()
                     refreshBranchState()
+                    compressingChatAgent?.let { agent ->
+                        longTermMemory = agent.getLongTermMemorySnapshot()
+                    }
                     refreshContextMessages()
 
                     if (summaryBlocks.isNotEmpty()) {

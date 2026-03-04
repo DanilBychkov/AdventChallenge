@@ -11,12 +11,15 @@ import org.bothubclient.domain.context.SummaryStorage
 import org.bothubclient.domain.entity.*
 import org.bothubclient.domain.memory.LongTermMemoryStore
 import org.bothubclient.domain.memory.MemoryItem
+import org.bothubclient.domain.repository.TaskContextStorage
+import org.bothubclient.domain.statemachine.TaskStateMachine
 import org.bothubclient.domain.usecase.UserProfilePromptBuilder
 import org.bothubclient.infrastructure.context.HeuristicFactsExtractor
 import org.bothubclient.infrastructure.logging.AppLogger
 import org.bothubclient.infrastructure.logging.FileLogger
 import org.bothubclient.infrastructure.memory.FileLongTermMemoryStore
 import org.bothubclient.infrastructure.memory.LtmRecaller
+import org.bothubclient.infrastructure.persistence.FileTaskContextStorage
 import org.bothubclient.infrastructure.repository.UserProfileRepository
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicReference
@@ -37,9 +40,9 @@ class CompressingChatAgent(
     private val longTermMemoryStore: LongTermMemoryStore = FileLongTermMemoryStore(),
     private val userProfileRepository: UserProfileRepository? = null,
     private val userProfilePromptBuilder: UserProfilePromptBuilder = UserProfilePromptBuilder(),
+    private val taskContextStorage: TaskContextStorage = FileTaskContextStorage(),
     initialConfig: ContextConfig = ContextConfig.DEFAULT
 ) : ChatAgent {
-
     private data class SessionState(
         var activeBranchId: String = "main",
         val branches: MutableMap<String, BranchState>
@@ -85,6 +88,23 @@ class CompressingChatAgent(
 
     private fun contextKey(sessionId: String, branchId: String): String = "$sessionId::$branchId"
 
+    private suspend fun loadTaskContextIfNeeded(
+        sessionId: String,
+        branchId: String,
+        branch: BranchState
+    ) {
+        val existing = synchronized(branch) { branch.taskContext }
+        if (existing != null) return
+
+        val loaded =
+            runCatching { taskContextStorage.load(sessionId, branchId) }.getOrNull() ?: return
+        synchronized(branch) {
+            if (branch.taskContext == null) {
+                branch.taskContext = loaded
+            }
+        }
+    }
+
     private fun removeOldestFromBranch(
         sessionId: String,
         branchId: String,
@@ -127,6 +147,9 @@ class CompressingChatAgent(
         val session = sessions.remove(sessionId)
         session?.branches?.keys?.forEach { branchId ->
             summaryStorage.clear(contextKey(sessionId, branchId))
+        }
+        session?.branches?.keys?.forEach { branchId ->
+            runCatching { taskContextStorage.delete(sessionId, branchId) }
         }
         pendingCompressions.keys.removeIf { it.startsWith("$sessionId::") }
         log("Reset session with summaries: $sessionId")
@@ -173,6 +196,18 @@ class CompressingChatAgent(
         val branchId = session.activeBranchId
         val branch = getBranch(sessionId, branchId)
         val sessionKey = contextKey(sessionId, branchId)
+
+        loadTaskContextIfNeeded(sessionId, branchId, branch)
+        val fsm =
+            TaskStateMachine(
+                sessionId = sessionId,
+                branchId = branchId,
+                branchState = branch,
+                storage = taskContextStorage
+            )
+        fsm.maybeStartPlanning(userMessage)
+        fsm.handleUserMessage(userMessage)
+        fsm.advance(userMessage = userMessage)
 
         section("SEND START")
         log("sessionId=$sessionId, branchId=$branchId, model=$model")
@@ -290,14 +325,16 @@ class CompressingChatAgent(
             }
 
         val composedContext =
-            contextComposer.compose(
-                sessionId = sessionKey,
-                systemPrompt = systemPromptWithLtm,
-                userMessage = userMessage,
-                historyMessages = historySnapshot,
-                facts = factsSnapshot,
-                config = config
-            )
+            contextComposer
+                .compose(
+                    sessionId = sessionKey,
+                    systemPrompt = systemPromptWithLtm,
+                    userMessage = userMessage,
+                    historyMessages = historySnapshot,
+                    facts = factsSnapshot,
+                    config = config
+                )
+                .copy(taskContext = synchronized(branch) { branch.taskContext })
 
         log(
             "Composed: ${composedContext.summaryBlocks.size} summaries + ${composedContext.recentMessages.size} recent = ~${composedContext.totalEstimatedTokens} tokens"
@@ -373,6 +410,7 @@ class CompressingChatAgent(
                             )
                 )
             }
+            advanceTask(sessionId, assistantMessage = result.message.content)
         }
 
         return result
@@ -676,13 +714,129 @@ class CompressingChatAgent(
             if (profilePrompt.isBlank()) systemPrompt else systemPrompt + "\n\n" + profilePrompt
         val historySnapshot = synchronized(branch) { branch.messages.toList() }
         val factsSnapshot = synchronized(branch) { snapshotWorkingMemory(branch) }
-        return contextComposer.compose(
-            sessionId = contextKey(sessionId, branchId),
-            systemPrompt = systemPromptWithProfile,
-            userMessage = userMessage,
-            historyMessages = historySnapshot,
-            facts = factsSnapshot,
-            config = config
+        val composed =
+            contextComposer.compose(
+                sessionId = contextKey(sessionId, branchId),
+                systemPrompt = systemPromptWithProfile,
+                userMessage = userMessage,
+                historyMessages = historySnapshot,
+                facts = factsSnapshot,
+                config = config
+            )
+        val taskContextSnapshot = synchronized(branch) { branch.taskContext }
+        return composed.copy(taskContext = taskContextSnapshot)
+    }
+
+    fun getTaskState(sessionId: String): TaskState {
+        val branchId = getActiveBranchId(sessionId)
+        val branch = getBranch(sessionId, branchId)
+        return TaskStateMachine(
+            sessionId = sessionId,
+            branchId = branchId,
+            branchState = branch,
+            storage = taskContextStorage
+        )
+            .getState()
+    }
+
+    fun getTaskContextSnapshot(sessionId: String): TaskContext? {
+        val branchId = getActiveBranchId(sessionId)
+        val branch = getBranch(sessionId, branchId)
+        return synchronized(branch) { branch.taskContext }
+    }
+
+    fun getCurrentStep(sessionId: String): TaskStep? {
+        val branchId = getActiveBranchId(sessionId)
+        val branch = getBranch(sessionId, branchId)
+        return TaskStateMachine(
+            sessionId = sessionId,
+            branchId = branchId,
+            branchState = branch,
+            storage = taskContextStorage
+        )
+            .getCurrentStep()
+    }
+
+    suspend fun advanceTask(
+        sessionId: String,
+        userMessage: String? = null,
+        assistantMessage: String? = null
+    ): TaskContext {
+        val branchId = getActiveBranchId(sessionId)
+        val branch = getBranch(sessionId, branchId)
+        loadTaskContextIfNeeded(sessionId, branchId, branch)
+
+        val fsm =
+            TaskStateMachine(
+                sessionId = sessionId,
+                branchId = branchId,
+                branchState = branch,
+                storage = taskContextStorage
+            )
+
+        if (userMessage != null) {
+            fsm.handleUserMessage(userMessage)
+        }
+        val next = fsm.advance(userMessage = userMessage, assistantMessage = assistantMessage)
+        return next ?: idleTaskContext()
+    }
+
+    suspend fun resetTask(sessionId: String) {
+        val branchId = getActiveBranchId(sessionId)
+        val branch = getBranch(sessionId, branchId)
+        TaskStateMachine(
+            sessionId = sessionId,
+            branchId = branchId,
+            branchState = branch,
+            storage = taskContextStorage
+        )
+            .reset()
+    }
+
+    suspend fun approveTaskPlan(sessionId: String): TaskContext? {
+        val branchId = getActiveBranchId(sessionId)
+        val branch = getBranch(sessionId, branchId)
+        loadTaskContextIfNeeded(sessionId, branchId, branch)
+        val fsm =
+            TaskStateMachine(
+                sessionId = sessionId,
+                branchId = branchId,
+                branchState = branch,
+                storage = taskContextStorage
+            )
+        fsm.advance()
+        fsm.setArtifact("planApproved", "true")
+        return fsm.advance()
+    }
+
+    suspend fun approveTaskValidation(sessionId: String): TaskContext? {
+        val branchId = getActiveBranchId(sessionId)
+        val branch = getBranch(sessionId, branchId)
+        loadTaskContextIfNeeded(sessionId, branchId, branch)
+        val fsm =
+            TaskStateMachine(
+                sessionId = sessionId,
+                branchId = branchId,
+                branchState = branch,
+                storage = taskContextStorage
+            )
+        fsm.advance()
+        fsm.setArtifact("validationApproved", "true")
+        return fsm.advance()
+    }
+
+    private fun idleTaskContext(): TaskContext {
+        val now = System.currentTimeMillis()
+        return TaskContext(
+            taskId = "idle",
+            state = TaskState.IDLE,
+            originalRequest = "",
+            plan = emptyList(),
+            currentStepIndex = 0,
+            artifacts = emptyMap(),
+            error = null,
+            createdAt = now,
+            updatedAt = now
         )
     }
 
