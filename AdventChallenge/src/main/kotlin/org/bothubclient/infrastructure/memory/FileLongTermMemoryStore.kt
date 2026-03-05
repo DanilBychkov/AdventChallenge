@@ -11,13 +11,11 @@ import org.bothubclient.domain.entity.FactEntry
 import org.bothubclient.domain.entity.WmCategory
 import org.bothubclient.domain.memory.LongTermMemoryStore
 import org.bothubclient.domain.memory.MemoryItem
-import java.nio.file.Files
+import org.bothubclient.infrastructure.persistence.AtomicFileWriter
 import java.nio.file.Path
-import java.nio.file.StandardCopyOption
 import kotlin.io.path.createDirectories
 import kotlin.io.path.exists
 import kotlin.io.path.readText
-import kotlin.io.path.writeText
 
 class FileLongTermMemoryStore(
     private val json: Json = Json {
@@ -242,25 +240,11 @@ class FileLongTermMemoryStore(
         }
     }
 
-    private fun atomicWrite(file: Path, content: String) {
-        var lastException: Exception? = null
-        repeat(3) { attempt ->
-            var tempFile: Path? = null
-            try {
-                tempFile = Files.createTempFile("ltm_", ".tmp")
-                tempFile.writeText(content)
-                java.io.FileOutputStream(tempFile.toFile(), true).use { fos -> fos.channel.force(true) }
-                Files.move(tempFile, file, StandardCopyOption.REPLACE_EXISTING)
-                return
-            } catch (e: java.nio.file.AccessDeniedException) {
-                lastException = e
-                tempFile?.let { Files.deleteIfExists(it) }
-                Thread.sleep(150L * (attempt + 1))
-            } catch (e: Exception) {
-                tempFile?.let { Files.deleteIfExists(it) }
-                throw e
-            }
-        }
-        throw lastException ?: IllegalStateException("Failed to write file after 3 attempts")
+    private suspend fun atomicWrite(file: Path, content: String) {
+        AtomicFileWriter.write(
+            file = file,
+            tempPrefix = "ltm_",
+            content = content
+        )
     }
 }

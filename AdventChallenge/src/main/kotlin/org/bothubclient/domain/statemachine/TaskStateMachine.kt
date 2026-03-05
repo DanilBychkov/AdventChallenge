@@ -1,15 +1,17 @@
 package org.bothubclient.domain.statemachine
 
 import org.bothubclient.domain.entity.*
+import org.bothubclient.domain.logging.Logger
+import org.bothubclient.domain.logging.NoOpLogger
 import org.bothubclient.domain.repository.TaskContextStorage
-import org.bothubclient.infrastructure.logging.FileLogger
 import java.util.*
 
 class TaskStateMachine(
     private val sessionId: String,
     private val branchId: String,
     private val branchState: BranchState,
-    private val storage: TaskContextStorage
+    private val storage: TaskContextStorage,
+    private val logger: Logger = NoOpLogger
 ) {
     private val tag = "TaskStateMachine"
 
@@ -46,7 +48,7 @@ class TaskStateMachine(
         synchronized(branchState) { branchState.taskContext = null }
         storage.save(sessionId, branchId, null)
         if (prev != null) {
-            FileLogger.log(tag, "Reset taskContext: sessionId=$sessionId branchId=$branchId taskId=${prev.taskId}")
+            logger.log(tag, "Reset taskContext: sessionId=$sessionId branchId=$branchId taskId=${prev.taskId}")
         }
         return null
     }
@@ -78,7 +80,7 @@ class TaskStateMachine(
 
         synchronized(branchState) { branchState.taskContext = ctx }
         storage.save(sessionId, branchId, ctx)
-        FileLogger.log(tag, "Transition IDLE -> PLANNING: sessionId=$sessionId branchId=$branchId taskId=${ctx.taskId}")
+        logger.log(tag, "Transition IDLE -> PLANNING: sessionId=$sessionId branchId=$branchId taskId=${ctx.taskId}")
         return ctx
     }
 
@@ -110,7 +112,7 @@ class TaskStateMachine(
             }
 
         storage.save(sessionId, branchId, updated)
-        FileLogger.log(
+        logger.log(
             tag,
             "Transition $currentState -> $newState: sessionId=$sessionId branchId=$branchId taskId=${updated.taskId}"
         )
@@ -183,7 +185,7 @@ class TaskStateMachine(
         storage.save(sessionId, branchId, next)
 
         if (next.state != ctx.state) {
-            FileLogger.log(
+            logger.log(
                 tag,
                 "Transition PLANNING -> EXECUTION: sessionId=$sessionId branchId=$branchId taskId=${ctx.taskId}"
             )
@@ -197,7 +199,7 @@ class TaskStateMachine(
                 ctx.copy(state = TaskState.VALIDATION, error = "Empty plan", updatedAt = System.currentTimeMillis())
             synchronized(branchState) { branchState.taskContext = failed }
             storage.save(sessionId, branchId, failed)
-            FileLogger.log(
+            logger.log(
                 tag,
                 "Transition EXECUTION -> VALIDATION (empty plan): sessionId=$sessionId branchId=$branchId taskId=${ctx.taskId}"
             )
@@ -257,12 +259,12 @@ class TaskStateMachine(
         storage.save(sessionId, branchId, next)
 
         if (next.state != ctx.state) {
-            FileLogger.log(
+            logger.log(
                 tag,
                 "Transition EXECUTION -> VALIDATION: sessionId=$sessionId branchId=$branchId taskId=${ctx.taskId}"
             )
         } else if (next.currentStepIndex != ctx.currentStepIndex || updatedStep.status != currentStep.status) {
-            FileLogger.log(
+            logger.log(
                 tag,
                 "Stay EXECUTION: sessionId=$sessionId branchId=$branchId taskId=${ctx.taskId} stepId=${currentStep.id} status=${updatedStep.status}"
             )
@@ -300,7 +302,7 @@ class TaskStateMachine(
                 )
             synchronized(branchState) { branchState.taskContext = done }
             storage.save(sessionId, branchId, done)
-            FileLogger.log(
+            logger.log(
                 tag,
                 "Transition VALIDATION -> DONE (success): sessionId=$sessionId branchId=$branchId taskId=${ctx.taskId}"
             )
@@ -317,7 +319,7 @@ class TaskStateMachine(
                 )
             synchronized(branchState) { branchState.taskContext = failure }
             storage.save(sessionId, branchId, failure)
-            FileLogger.log(
+            logger.log(
                 tag,
                 "Transition VALIDATION -> DONE (failed): sessionId=$sessionId branchId=$branchId taskId=${ctx.taskId} retryCount=$retryCount"
             )
@@ -345,7 +347,7 @@ class TaskStateMachine(
 
         synchronized(branchState) { branchState.taskContext = retry }
         storage.save(sessionId, branchId, retry)
-        FileLogger.log(
+        logger.log(
             tag,
             "Transition VALIDATION -> EXECUTION (retry): sessionId=$sessionId branchId=$branchId taskId=${ctx.taskId} retryCount=${retryCount + 1}"
         )

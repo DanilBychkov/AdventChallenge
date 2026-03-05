@@ -24,7 +24,8 @@ private enum class ProfileTab(val title: String) {
     Identity("Identity"),
     Preferences("Preferences"),
     Rules("Rules"),
-    Context("Context")
+    Context("Context"),
+    Invariants("Invariants")
 }
 
 @Composable
@@ -214,6 +215,13 @@ fun ProfileEditorScreen(
                             label = { Text("Предпочтительные технологии (категория: tech1, tech2)") },
                             modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp),
                             maxLines = 8
+                        )
+                    }
+
+                    ProfileTab.Invariants -> {
+                        InvariantsEditor(
+                            invariants = edited.invariants,
+                            onChange = { edited = edited.copy(invariants = it) }
                         )
                     }
                 }
@@ -499,6 +507,138 @@ private fun BehaviorRulesEditor(
                             Text("Удалить")
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun InvariantsEditor(
+    invariants: List<ProfileInvariant>,
+    onChange: (List<ProfileInvariant>) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text("Инварианты", style = MaterialTheme.typography.subtitle1)
+        IconButton(
+            onClick = {
+                onChange(
+                    invariants +
+                            ProfileInvariant(
+                                category = InvariantCategory.TECH_STACK,
+                                description = ""
+                            )
+                )
+            }
+        ) {
+            Icon(imageVector = Icons.Default.Add, contentDescription = "Добавить инвариант")
+        }
+    }
+
+    if (invariants.isEmpty()) {
+        Text(text = "Нет инвариантов", style = MaterialTheme.typography.body2, color = Color.Gray)
+        return
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        invariants.forEachIndexed { index, inv ->
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                elevation = 1.dp,
+                shape = MaterialTheme.shapes.small
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(
+                                checked = inv.isActive,
+                                onCheckedChange = { checked ->
+                                    onChange(
+                                        invariants.mapIndexed { i, item ->
+                                            if (i == index) item.copy(isActive = checked) else item
+                                        }
+                                    )
+                                }
+                            )
+                            Text(if (inv.isActive) "Активен" else "Отключён")
+                        }
+                        TextButton(onClick = { onChange(invariants.filterIndexed { i, _ -> i != index }) }) {
+                            Text("Удалить")
+                        }
+                    }
+
+                    var categoryExpanded by remember(index) { mutableStateOf(false) }
+                    DropdownSelector(
+                        label = "Категория",
+                        selectedValue = inv.category,
+                        displayValue = { it.name },
+                        items = InvariantCategory.entries,
+                        onSelected = { selected ->
+                            onChange(
+                                invariants.mapIndexed { i, item ->
+                                    if (i == index) item.copy(category = selected) else item
+                                }
+                            )
+                        },
+                        expanded = categoryExpanded,
+                        onExpandedChange = { categoryExpanded = it },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    var severityExpanded by remember(index) { mutableStateOf(false) }
+                    DropdownSelector(
+                        label = "Серьёзность",
+                        selectedValue = inv.severity,
+                        displayValue = { it.name },
+                        items = InvariantSeverity.entries,
+                        onSelected = { selected ->
+                            onChange(
+                                invariants.mapIndexed { i, item ->
+                                    if (i == index) item.copy(severity = selected) else item
+                                }
+                            )
+                        },
+                        expanded = severityExpanded,
+                        onExpandedChange = { severityExpanded = it },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = inv.description,
+                        onValueChange = { v ->
+                            onChange(
+                                invariants.mapIndexed { i, item ->
+                                    if (i == index) item.copy(description = v) else item
+                                }
+                            )
+                        },
+                        label = { Text("Описание") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = inv.rationale,
+                        onValueChange = { v ->
+                            onChange(
+                                invariants.mapIndexed { i, item ->
+                                    if (i == index) item.copy(rationale = v) else item
+                                }
+                            )
+                        },
+                        label = { Text("Обоснование") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
             }
         }

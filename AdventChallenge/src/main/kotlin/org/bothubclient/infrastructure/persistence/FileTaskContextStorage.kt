@@ -12,7 +12,6 @@ import org.bothubclient.infrastructure.logging.FileLogger
 import org.bothubclient.infrastructure.persistence.dto.TaskContextDto
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.StandardCopyOption
 import kotlin.io.path.*
 
 class FileTaskContextStorage(
@@ -95,28 +94,12 @@ class FileTaskContextStorage(
             .toList()
     }
 
-    private fun atomicWrite(file: Path, content: String) {
-        var lastException: Exception? = null
-        repeat(3) { attempt ->
-            var tmp: Path? = null
-            try {
-                tmp = Files.createTempFile("task_context_", ".tmp")
-                tmp.writeText(content)
-                java.io.FileOutputStream(tmp.toFile(), true).use { fos ->
-                    fos.channel.force(true)
-                }
-                Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING)
-                return
-            } catch (e: java.nio.file.AccessDeniedException) {
-                lastException = e
-                tmp?.let { runCatching { Files.deleteIfExists(it) } }
-                Thread.sleep(150L * (attempt + 1))
-            } catch (e: Exception) {
-                tmp?.let { runCatching { Files.deleteIfExists(it) } }
-                throw e
-            }
-        }
-        throw lastException ?: IllegalStateException("Failed to write file after 3 attempts")
+    private suspend fun atomicWrite(file: Path, content: String) {
+        AtomicFileWriter.write(
+            file = file,
+            tempPrefix = "task_context_",
+            content = content
+        )
     }
 
     private fun contextKey(sessionId: String, branchId: String): String = "$sessionId::$branchId"

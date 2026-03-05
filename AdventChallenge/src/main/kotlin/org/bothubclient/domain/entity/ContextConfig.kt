@@ -10,6 +10,7 @@ data class ContextConfig(
     val summaryMaxTokens: Int = 200,
     val includeAgentPrimer: Boolean = true,
     val enableFactsMemory: Boolean = true,
+    val enableTaskStateMachine: Boolean = false,
     val maxFacts: Int = 24
 ) {
     companion object {
@@ -47,6 +48,9 @@ data class ContextConfig(
 
     fun withAutoCompression(enabled: Boolean): ContextConfig = copy(enableAutoCompression = enabled)
 
+    fun withTaskStateMachine(enabled: Boolean): ContextConfig =
+        copy(enableTaskStateMachine = enabled)
+
     override fun toString(): String =
-        "ContextConfig(strategy=$strategy, keepLastN=$keepLastN, blockSize=$compressionBlockSize, maxBlocks=$maxSummaryBlocks, auto=$enableAutoCompression, facts=$enableFactsMemory)"
+        "ContextConfig(strategy=$strategy, keepLastN=$keepLastN, blockSize=$compressionBlockSize, maxBlocks=$maxSummaryBlocks, auto=$enableAutoCompression, facts=$enableFactsMemory, tsm=$enableTaskStateMachine)"
 }

@@ -7,7 +7,7 @@ import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import org.bothubclient.application.usecase.*
 import org.bothubclient.config.SystemPrompt
 import org.bothubclient.domain.entity.*
-import org.bothubclient.infrastructure.repository.UserProfileRepository
+import org.bothubclient.domain.repository.UserProfileRepository
 import org.bothubclient.presentation.viewmodel.ChatViewModel
 import org.junit.After
 import org.junit.Before

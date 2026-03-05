@@ -8,11 +8,15 @@ import kotlinx.coroutines.launch
 import org.bothubclient.application.usecase.*
 import org.bothubclient.config.ModelPricing
 import org.bothubclient.config.SystemPrompt
+import org.bothubclient.domain.agent.ChatAgentIntrospection
 import org.bothubclient.domain.entity.*
+import org.bothubclient.domain.logging.Logger
+import org.bothubclient.domain.logging.NoOpLogger
 import org.bothubclient.domain.memory.MemoryItem
-import org.bothubclient.infrastructure.agent.CompressingChatAgent
-import org.bothubclient.infrastructure.logging.FileLogger
-import org.bothubclient.infrastructure.repository.UserProfileRepository
+import org.bothubclient.domain.repository.UserProfileRepository
+import org.bothubclient.presentation.commands.MemoryCommand
+import org.bothubclient.presentation.commands.MemoryCommandParser
+import org.bothubclient.presentation.commands.MemoryParseResult
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -27,10 +31,12 @@ class ChatViewModel(
     private val getSessionMessagesUseCase: GetSessionMessagesUseCase,
     private val getTokenStatisticsUseCase: GetTokenStatisticsUseCase,
     private val userProfileRepository: UserProfileRepository,
-    private val compressingChatAgent: CompressingChatAgent? = null
+    private val logger: Logger = NoOpLogger,
+    private val agentIntrospection: ChatAgentIntrospection? = null
 ) {
+    private val memoryCommandParser = MemoryCommandParser()
 
-    private fun log(message: String) = FileLogger.log("ChatViewModel", message)
+    private fun log(message: String) = logger.log("ChatViewModel", message)
 
     var messages by mutableStateOf<List<Message>>(emptyList())
         private set
@@ -81,6 +87,9 @@ class ChatViewModel(
         private set
 
     var workingMemory by mutableStateOf<Map<WmCategory, Map<String, FactEntry>>>(emptyMap())
+        private set
+
+    var agentMetrics by mutableStateOf(AgentMetricsSnapshot(0, 0, 0, 0, 0, 0, 0, 0, 0))
         private set
 
     var stmCount by mutableStateOf(0)
@@ -267,7 +276,7 @@ class ChatViewModel(
     }
 
     private fun updateSummaryBlocks() {
-        compressingChatAgent?.let { agent ->
+        agentIntrospection?.let { agent ->
             summaryBlocks = agent.getSummaryBlocks("chat-ui")
             log("Updated summary blocks: ${summaryBlocks.size}")
         }
@@ -276,7 +285,7 @@ class ChatViewModel(
     fun updateContextConfig(newConfig: ContextConfig) {
         log("CONFIG UPDATE: old=$contextConfig -> new=$newConfig")
         contextConfig = newConfig
-        compressingChatAgent?.updateConfig(newConfig)
+        agentIntrospection?.updateConfig(newConfig)
         refreshContextMessages()
     }
 
@@ -300,6 +309,11 @@ class ChatViewModel(
         updateContextConfig(contextConfig.withAutoCompression(enabled))
     }
 
+    fun onTaskStateMachineToggled(enabled: Boolean) {
+        log("onTaskStateMachineToggled: $enabled")
+        updateContextConfig(contextConfig.withTaskStateMachine(enabled))
+    }
+
     fun onStrategySelected(strategy: ContextStrategy) {
         log("onStrategySelected: $strategy")
         updateContextConfig(contextConfig.withStrategy(strategy))
@@ -307,7 +321,7 @@ class ChatViewModel(
     }
 
     fun onBranchSelected(scope: CoroutineScope, branchId: String) {
-        compressingChatAgent?.setActiveBranch("chat-ui", branchId)
+        agentIntrospection?.setActiveBranch("chat-ui", branchId)
         refreshBranchState()
         scope.launch {
             messages = getSessionMessagesUseCase()
@@ -321,7 +335,7 @@ class ChatViewModel(
     }
 
     fun createBranchFromCheckpoint(scope: CoroutineScope) {
-        val agent = compressingChatAgent ?: return
+        val agent = agentIntrospection ?: return
         val newBranchId = agent.createBranchFromCheckpoint("chat-ui", branchCheckpointSize)
         agent.setActiveBranch("chat-ui", newBranchId)
         refreshBranchState()
@@ -333,21 +347,27 @@ class ChatViewModel(
     }
 
     private fun refreshBranchState() {
-        compressingChatAgent?.let { agent ->
+        agentIntrospection?.let { agent ->
             branches = agent.getBranchIds("chat-ui")
             activeBranchId = agent.getActiveBranchId("chat-ui")
             branchCheckpointSize = messages.size
             workingMemory = agent.getWorkingMemory("chat-ui")
+            agentMetrics = agent.getMetricsSnapshot("chat-ui")
             stmCount = agent.getStmCount("chat-ui")
             shortTermMessages = agent.getShortTermMessages("chat-ui")
-            taskContext = agent.getTaskContextSnapshot("chat-ui")
+            taskContext =
+                if (contextConfig.enableTaskStateMachine) {
+                    agent.getTaskContextSnapshot("chat-ui")
+                } else {
+                    null
+                }
             val totalFacts = workingMemory.values.sumOf { it.size }
             log("Updated memory: stm=$stmCount wmGroups=${workingMemory.size} wmFacts=$totalFacts")
         }
     }
 
     fun approveTaskPlan(scope: CoroutineScope) {
-        val agent = compressingChatAgent ?: return
+        val agent = agentIntrospection ?: return
         if (isLoading) return
         isLoading = true
         statusMessage = "Утверждение плана..."
@@ -366,7 +386,7 @@ class ChatViewModel(
     }
 
     fun approveTaskValidation(scope: CoroutineScope) {
-        val agent = compressingChatAgent ?: return
+        val agent = agentIntrospection ?: return
         if (isLoading) return
         isLoading = true
         statusMessage = "Подтверждение завершения..."
@@ -385,7 +405,7 @@ class ChatViewModel(
     }
 
     fun resetTask(scope: CoroutineScope) {
-        val agent = compressingChatAgent ?: return
+        val agent = agentIntrospection ?: return
         if (isLoading) return
         isLoading = true
         statusMessage = "Сброс задачи..."
@@ -404,7 +424,7 @@ class ChatViewModel(
     }
 
     fun loadLongTermMemory(scope: CoroutineScope) {
-        val agent = compressingChatAgent ?: return
+        val agent = agentIntrospection ?: return
         scope.launch {
             longTermMemory = agent.getLongTermMemorySnapshot()
             log("Loaded LTM: ${longTermMemory.size}")
@@ -416,7 +436,7 @@ class ChatViewModel(
             contextMessages = emptyList()
             return
         }
-        compressingChatAgent?.let { agent ->
+        agentIntrospection?.let { agent ->
             val composed =
                 agent.getComposedContext(
                     sessionId = "chat-ui",
@@ -533,10 +553,6 @@ class ChatViewModel(
         isHistoryLoaded = true
     }
 
-    private fun tryParseCategory(text: String): WmCategory? {
-        return runCatching { WmCategory.valueOf(text.trim().uppercase()) }.getOrNull()
-    }
-
     private fun jsonString(
         memoryOps: List<Map<String, Any?>>,
         uiAction: String,
@@ -559,405 +575,232 @@ class ChatViewModel(
     }
 
     private fun handleMemoryCommand(scope: CoroutineScope, raw: String): Boolean {
-        val text = raw.trim()
-        if (!text.startsWith("!")) return false
-        val parts = text.split(Regex("\\s+"))
-        if (parts.isEmpty()) return false
-        when (parts[0].lowercase()) {
-            "!memory" -> {
-                if (parts.size >= 3 && parts[1].lowercase() == "panel") {
-                    when (parts[2].lowercase()) {
-                        "show" -> {
-                            isMemoryPanelVisible = true
+        val parsed = memoryCommandParser.parse(raw) ?: return false
+        when (parsed) {
+            is MemoryParseResult.Error -> {
+                val err = jsonString(emptyList(), "none", parsed.message)
+                messages = messages + Message.system(err)
+                return true
+            }
+
+            is MemoryParseResult.Command -> {
+                when (val cmd = parsed.command) {
+                    MemoryCommand.MemoryPanel.Show -> {
+                        isMemoryPanelVisible = true
+                        val msg = jsonString(emptyList(), "memory_panel", "✓ Memory Panel открыта")
+                        messages = messages + Message.system(msg)
+                    }
+
+                    MemoryCommand.MemoryPanel.Hide -> {
+                        isMemoryPanelVisible = false
+                        val msg = jsonString(emptyList(), "none", "✓ Memory Panel скрыта")
+                        messages = messages + Message.system(msg)
+                    }
+
+                    MemoryCommand.MemoryPanel.Toggle -> {
+                        isMemoryPanelVisible = !isMemoryPanelVisible
+                        val action = if (isMemoryPanelVisible) "memory_panel" else "none"
+                        val m =
+                                if (isMemoryPanelVisible) "✓ Memory Panel открыта"
+                                else "✓ Memory Panel скрыта"
+                        val msg = jsonString(emptyList(), action, m)
+                        messages = messages + Message.system(msg)
+                    }
+
+                    MemoryCommand.Stm.Clear -> {
+                        val agent = agentIntrospection
+                        if (agent != null) {
+                            val removed = agent.clearShortTermMemory("chat-ui")
+                            refreshBranchState()
+                            val op =
+                                mapOf(
+                                    "op" to "CLEAR_STM",
+                                    "layer" to "STM",
+                                    "category" to null,
+                                    "key" to "",
+                                    "value" to null,
+                                    "confidence" to 1.0
+                                )
+                            val msg =
+                                jsonString(
+                                    listOf(op),
+                                    "memory_panel_refresh",
+                                    "✓ STM очищена ($removed)"
+                                )
+                            messages = messages + Message.system(msg)
+                        }
+                    }
+
+                    is MemoryCommand.Stm.Last -> {
+                        val agent = agentIntrospection
+                        if (agent != null) {
+                            val items = agent.getShortTermMessages("chat-ui").takeLast(cmd.n)
+                            val preview =
+                                items.joinToString(separator = "\\n") { m ->
+                                    "${m.timestamp} [${m.role}] ${m.content.take(120)}"
+                                }
                             val msg =
                                 jsonString(
                                     emptyList(),
                                     "memory_panel",
-                                    "✓ Memory Panel открыта"
+                                    "Последние ${cmd.n} сообщений:\\n$preview"
                                 )
                             messages = messages + Message.system(msg)
                         }
-                        "hide" -> {
-                            isMemoryPanelVisible = false
-                            val msg = jsonString(emptyList(), "none", "✓ Memory Panel скрыта")
-                            messages = messages + Message.system(msg)
-                        }
-                        "toggle" -> {
-                            isMemoryPanelVisible = !isMemoryPanelVisible
-                            val action = if (isMemoryPanelVisible) "memory_panel" else "none"
-                            val m =
-                                if (isMemoryPanelVisible) "✓ Memory Panel открыта"
-                                else "✓ Memory Panel скрыта"
-                            val msg = jsonString(emptyList(), action, m)
-                            messages = messages + Message.system(msg)
-                        }
                     }
-                    return true
-                }
-            }
-            "!stm" -> {
-                if (parts.size >= 2 && parts[1].lowercase() == "clear") {
-                    val agent = compressingChatAgent
-                    if (agent != null) {
-                        val removed = agent.clearShortTermMemory("chat-ui")
+
+                    is MemoryCommand.Wm.Set -> {
+                        agentIntrospection?.setWorkingMemoryEntry(
+                            "chat-ui",
+                            cmd.category,
+                            cmd.key,
+                            cmd.value,
+                            cmd.confidence
+                        )
                         refreshBranchState()
                         val op =
                             mapOf(
-                                "op" to "CLEAR_STM",
-                                "layer" to "STM",
-                                "category" to null,
-                                "key" to "",
-                                "value" to null,
-                                "confidence" to 1.0
-                            )
-                        val msg =
-                            jsonString(
-                                listOf(op),
-                                "memory_panel_refresh",
-                                "✓ STM очищена ($removed)"
-                            )
-                        messages = messages + Message.system(msg)
-                    }
-                    return true
-                }
-                if (parts.size >= 3 && parts[1].lowercase() == "last") {
-                    val n = parts[2].toIntOrNull() ?: 10
-                    val agent = compressingChatAgent
-                    if (agent != null) {
-                        val items = agent.getShortTermMessages("chat-ui").takeLast(n)
-                        val preview =
-                            items.joinToString(separator = "\\n") { m ->
-                                "${m.timestamp} [${m.role}] ${m.content.take(120)}"
-                            }
-                        val msg =
-                            jsonString(
-                                emptyList(),
-                                "memory_panel",
-                                "Последние $n сообщений:\\n$preview"
-                            )
-                        messages = messages + Message.system(msg)
-                    }
-                    return true
-                }
-            }
-            "!wm" -> {
-                if (parts.size >= 2) {
-                    when (parts[1].lowercase()) {
-                        "set" -> {
-                            if (parts.size >= 4) {
-                                val category = tryParseCategory(parts[2])
-                                if (category == null) {
-                                    val err =
-                                        jsonString(
-                                            emptyList(),
-                                            "none",
-                                            "Ошибка: CATEGORY должен быть одним из USER_INFO/TASK/CONTEXT/PROGRESS"
-                                        )
-                                    messages = messages + Message.system(err)
-                                    return true
-                                }
-                                val tail =
-                                    text.substringAfter(
-                                        parts[0] + " " + parts[1] + " " + parts[2]
-                                    )
-                                        .trim()
-                                val eqIndex = tail.indexOf('=')
-                                if (eqIndex <= 0) {
-                                    val err =
-                                        jsonString(
-                                            emptyList(),
-                                            "none",
-                                            "Ошибка: ожидается key=value"
-                                        )
-                                    messages = messages + Message.system(err)
-                                    return true
-                                }
-                                val key = tail.substring(0, eqIndex).trim()
-                                val rest = tail.substring(eqIndex + 1).trim()
-                                val tokens = rest.split(Regex("\\s+"))
-                                val lastAsConf = tokens.lastOrNull()?.toFloatOrNull()
-                                val value =
-                                    if (lastAsConf != null) {
-                                        rest.removeSuffix(tokens.last()).trim()
-                                    } else {
-                                        rest
-                                    }
-                                val conf = lastAsConf ?: 1.0f
-                                compressingChatAgent?.setWorkingMemoryEntry(
-                                    "chat-ui",
-                                    category,
-                                    key,
-                                    value,
-                                    conf
-                                )
-                                refreshBranchState()
-                                val op =
-                                    mapOf(
                                         "op" to "SET_WM",
                                         "layer" to "WM",
-                                        "category" to category.name,
-                                        "key" to key,
-                                        "value" to value,
-                                        "confidence" to conf
-                                    )
-                                val msg =
-                                    jsonString(
+                                "category" to cmd.category.name,
+                                "key" to cmd.key,
+                                "value" to cmd.value,
+                                "confidence" to cmd.confidence
+                            )
+                        val msg =
+                            jsonString(
                                         listOf(op),
                                         "memory_panel_refresh",
-                                        "✓ Запомнил в WM: $key"
-                                    )
-                                messages = messages + Message.system(msg)
-                            } else {
-                                val err =
-                                    jsonString(
-                                        emptyList(),
-                                        "none",
-                                        "Синтаксис: !wm set <CATEGORY> <key>=<value> [confidence]"
-                                    )
-                                messages = messages + Message.system(err)
-                            }
-                            return true
-                        }
-                        "get" -> {
-                            if (parts.size >= 4) {
-                                val category = tryParseCategory(parts[2])
-                                val key = parts.drop(3).joinToString(" ").trim()
-                                if (category == null || key.isBlank()) {
-                                    val err =
-                                        jsonString(
-                                            emptyList(),
-                                            "none",
-                                            "Синтаксис: !wm get <CATEGORY> <key>"
-                                        )
-                                    messages = messages + Message.system(err)
-                                    return true
-                                }
-                                val value = workingMemory[category]?.get(key)?.value ?: ""
-                                val res = if (value.isBlank()) "Не найдено" else "$key=$value"
-                                val msg = jsonString(emptyList(), "memory_panel", res)
-                                messages = messages + Message.system(msg)
-                                return true
-                            } else {
-                                val err =
-                                    jsonString(
-                                        emptyList(),
-                                        "none",
-                                        "Синтаксис: !wm get <CATEGORY> <key>"
-                                    )
-                                messages = messages + Message.system(err)
-                                return true
-                            }
-                        }
-                        "delete" -> {
-                            if (parts.size >= 4) {
-                                val category = tryParseCategory(parts[2])
-                                val key = parts.drop(3).joinToString(" ").trim()
-                                if (category == null || key.isBlank()) {
-                                    val err =
-                                        jsonString(
-                                            emptyList(),
-                                            "none",
-                                            "Синтаксис: !wm delete <CATEGORY> <key>"
-                                        )
-                                    messages = messages + Message.system(err)
-                                    return true
-                                }
-                                val removed =
-                                    compressingChatAgent?.deleteWorkingMemoryEntry(
+                                "✓ Запомнил в WM: ${cmd.key}"
+                            )
+                        messages = messages + Message.system(msg)
+                    }
+
+                    is MemoryCommand.Wm.Get -> {
+                        val value = workingMemory[cmd.category]?.get(cmd.key)?.value ?: ""
+                        val res = if (value.isBlank()) "Не найдено" else "${cmd.key}=$value"
+                        val msg = jsonString(emptyList(), "memory_panel", res)
+                        messages = messages + Message.system(msg)
+                    }
+
+                    is MemoryCommand.Wm.Delete -> {
+                        val removed =
+                            agentIntrospection?.deleteWorkingMemoryEntry(
                                         "chat-ui",
-                                        category,
-                                        key
-                                    )
+                                cmd.category,
+                                cmd.key
+                            )
                                         ?: false
-                                refreshBranchState()
-                                val op =
-                                    mapOf(
+                        refreshBranchState()
+                        val op =
+                            mapOf(
                                         "op" to "DELETE_WM",
                                         "layer" to "WM",
-                                        "category" to category.name,
-                                        "key" to key,
+                                "category" to cmd.category.name,
+                                "key" to cmd.key,
                                         "value" to null,
                                         "confidence" to 1.0
-                                    )
-                                val msg =
-                                    jsonString(
+                            )
+                        val msg =
+                            jsonString(
                                         listOf(op),
                                         "memory_panel_refresh",
-                                        if (removed) "✓ Удалено из ${category.name}: $key"
-                                        else "Не найдено: $key"
-                                    )
-                                messages = messages + Message.system(msg)
-                                return true
-                            } else {
-                                val err =
-                                    jsonString(
-                                        emptyList(),
-                                        "none",
-                                        "Синтаксис: !wm delete <CATEGORY> <key>"
-                                    )
-                                messages = messages + Message.system(err)
-                                return true
-                            }
-                        }
-                        "list" -> {
-                            if (parts.size == 2) {
-                                val count = workingMemory.values.sumOf { it.size }
-                                val msg =
+                                if (removed) "✓ Удалено из ${cmd.category.name}: ${cmd.key}"
+                                else "Не найдено: ${cmd.key}"
+                            )
+                        messages = messages + Message.system(msg)
+                    }
+
+                    is MemoryCommand.Wm.List -> {
+                        if (cmd.category == null) {
+                            val count = workingMemory.values.sumOf { it.size }
+                            val msg =
                                     jsonString(
                                         emptyList(),
                                         "memory_panel",
                                         "✓ Memory Panel открыта, WM записи: $count"
                                     )
-                                messages = messages + Message.system(msg)
-                                return true
-                            } else {
-                                val category = tryParseCategory(parts[2])
-                                if (category == null) {
-                                    val err =
-                                        jsonString(
-                                            emptyList(),
-                                            "none",
-                                            "Синтаксис: !wm list [CATEGORY]"
-                                        )
-                                    messages = messages + Message.system(err)
-                                    return true
-                                }
-                                val count = workingMemory[category]?.size ?: 0
-                                val msg =
+                            messages = messages + Message.system(msg)
+                        } else {
+                            val count = workingMemory[cmd.category]?.size ?: 0
+                            val msg =
                                     jsonString(
                                         emptyList(),
                                         "memory_panel",
-                                        "✓ Memory Panel открыта на вкладке WM > ${category.name} (записей $count)"
+                                        "✓ Memory Panel открыта на вкладке WM > ${cmd.category.name} (записей $count)"
                                     )
-                                messages = messages + Message.system(msg)
-                                return true
-                            }
+                            messages = messages + Message.system(msg)
                         }
                     }
-                }
-            }
-            "!ltm" -> {
-                if (parts.size >= 2) {
-                    when (parts[1].lowercase()) {
-                        "save" -> {
-                            val tail = text.substringAfter("!ltm save").trim()
-                            val eqIndex = tail.indexOf('=')
-                            if (eqIndex <= 0) {
-                                val err =
-                                    jsonString(
-                                        emptyList(),
-                                        "none",
-                                        "Синтаксис: !ltm save <key>=<value> [CATEGORY]"
-                                    )
-                                messages = messages + Message.system(err)
-                                return true
-                            }
-                            val key = tail.substring(0, eqIndex).trim()
-                            val after = tail.substring(eqIndex + 1).trim()
-                            val tokens = after.split(Regex("\\s+"))
-                            val categoryText = tokens.lastOrNull()
-                            val value =
-                                if (categoryText != null &&
-                                    tryParseCategory(categoryText) != null
-                                ) {
-                                    after.removeSuffix(categoryText).trim()
-                                } else {
-                                    after
-                                }
-                            val category =
-                                categoryText?.let { tryParseCategory(it) } ?: WmCategory.CONTEXT
-                            scope.launch {
-                                compressingChatAgent?.saveToLtm(category, key, value, 1.0f)
-                                loadLongTermMemory(this)
-                                val op =
+
+                    is MemoryCommand.Ltm.Save -> {
+                        scope.launch {
+                            agentIntrospection?.saveToLtm(cmd.category, cmd.key, cmd.value, 1.0f)
+                            loadLongTermMemory(this)
+                            val op =
                                     mapOf(
                                         "op" to "SAVE_LTM",
                                         "layer" to "LTM",
-                                        "category" to category.name,
-                                        "key" to key,
-                                        "value" to value,
+                                        "category" to cmd.category.name,
+                                        "key" to cmd.key,
+                                        "value" to cmd.value,
                                         "confidence" to 1.0
                                     )
-                                val msg =
+                            val msg =
                                     jsonString(
                                         listOf(op),
                                         "memory_panel_refresh",
-                                        "✓ Сохранено в LTM: $key"
+                                        "✓ Сохранено в LTM: ${cmd.key}"
                                     )
-                                messages = messages + Message.system(msg)
-                            }
-                            return true
+                            messages = messages + Message.system(msg)
                         }
-                        "find" -> {
-                            val query = text.substringAfter("!ltm find").trim()
-                            if (query.isBlank()) {
-                                val err =
-                                    jsonString(
-                                        emptyList(),
-                                        "none",
-                                        "Синтаксис: !ltm find <query>"
-                                    )
-                                messages = messages + Message.system(err)
-                                return true
-                            }
-                            scope.launch {
-                                val items =
-                                    compressingChatAgent?.findInLtm(query, 10) ?: emptyList()
-                                val lines =
+                    }
+
+                    is MemoryCommand.Ltm.Find -> {
+                        scope.launch {
+                            val items = agentIntrospection?.findInLtm(cmd.query, 10) ?: emptyList()
+                            val lines =
                                     items.joinToString(separator = "\\n") { item ->
                                         "${item.category.name}:${item.key}=${item.entry.value}"
                                     }
-                                val msg =
+                            val msg =
                                     jsonString(
                                         emptyList(),
                                         "memory_panel",
                                         if (lines.isBlank()) "Ничего не найдено"
                                         else "🔍 Результаты:\\n$lines"
                                     )
-                                messages = messages + Message.system(msg)
-                            }
-                            return true
+                            messages = messages + Message.system(msg)
                         }
-                        "delete" -> {
-                            val key = text.substringAfter("!ltm delete").trim()
-                            if (key.isBlank()) {
-                                val err =
-                                    jsonString(
-                                        emptyList(),
-                                        "none",
-                                        "Синтаксис: !ltm delete <key>"
-                                    )
-                                messages = messages + Message.system(err)
-                                return true
-                            }
-                            scope.launch {
-                                val n = compressingChatAgent?.deleteFromLtmByKey(key) ?: 0
-                                loadLongTermMemory(this)
-                                val op =
+                    }
+
+                    is MemoryCommand.Ltm.Delete -> {
+                        scope.launch {
+                            val n = agentIntrospection?.deleteFromLtmByKey(cmd.key) ?: 0
+                            loadLongTermMemory(this)
+                            val op =
                                     mapOf(
                                         "op" to "DELETE_LTM",
                                         "layer" to "LTM",
                                         "category" to null,
-                                        "key" to key,
+                                        "key" to cmd.key,
                                         "value" to null,
                                         "confidence" to 1.0
                                     )
-                                val msg =
+                            val msg =
                                     jsonString(
                                         listOf(op),
                                         "memory_panel_refresh",
-                                        if (n > 0) "✓ Удалено из LTM: $key ($n)"
-                                        else "Ничего не удалено: $key"
+                                        if (n > 0) "✓ Удалено из LTM: ${cmd.key} ($n)"
+                                        else "Ничего не удалено: ${cmd.key}"
                                     )
-                                messages = messages + Message.system(msg)
-                            }
-                            return true
+                            messages = messages + Message.system(msg)
                         }
                     }
                 }
+                return true
             }
         }
-        return false
     }
 
     fun sendMessage(scope: CoroutineScope) {
@@ -1032,7 +875,7 @@ class ChatViewModel(
                     updateTokenStatistics()
                     updateSummaryBlocks()
                     refreshBranchState()
-                    compressingChatAgent?.let { agent ->
+                    agentIntrospection?.let { agent ->
                         longTermMemory = agent.getLongTermMemorySnapshot()
                     }
                     refreshContextMessages()
@@ -1085,7 +928,16 @@ class ChatViewModel(
                         .getTokenStatisticsUseCase,
                 userProfileRepository =
                     org.bothubclient.infrastructure.di.ServiceLocator.userProfileRepository,
-                compressingChatAgent =
+                logger =
+                    object : Logger {
+                        override fun log(tag: String, message: String) {
+                            org.bothubclient.infrastructure.logging.FileLogger.log(
+                                tag,
+                                message
+                            )
+                        }
+                    },
+                agentIntrospection =
                     org.bothubclient.infrastructure.di.ServiceLocator.compressingChatAgent
             )
         }

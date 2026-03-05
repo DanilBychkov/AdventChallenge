@@ -4,13 +4,16 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import org.bothubclient.domain.agent.ChatAgent
+import org.bothubclient.domain.agent.ChatAgentIntrospection
 import org.bothubclient.domain.context.ContextComposer
 import org.bothubclient.domain.context.SummaryGenerator
 import org.bothubclient.domain.context.SummaryResult
 import org.bothubclient.domain.context.SummaryStorage
 import org.bothubclient.domain.entity.*
+import org.bothubclient.domain.logging.Logger
 import org.bothubclient.domain.memory.LongTermMemoryStore
 import org.bothubclient.domain.memory.MemoryItem
+import org.bothubclient.domain.repository.ChatHistoryStorage
 import org.bothubclient.domain.repository.TaskContextStorage
 import org.bothubclient.domain.statemachine.TaskStateMachine
 import org.bothubclient.domain.usecase.UserProfilePromptBuilder
@@ -19,9 +22,11 @@ import org.bothubclient.infrastructure.logging.AppLogger
 import org.bothubclient.infrastructure.logging.FileLogger
 import org.bothubclient.infrastructure.memory.FileLongTermMemoryStore
 import org.bothubclient.infrastructure.memory.LtmRecaller
+import org.bothubclient.infrastructure.persistence.FileChatHistoryStorage
 import org.bothubclient.infrastructure.persistence.FileTaskContextStorage
 import org.bothubclient.infrastructure.repository.UserProfileRepository
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
 sealed class CompressionEvent {
@@ -41,14 +46,29 @@ class CompressingChatAgent(
     private val userProfileRepository: UserProfileRepository? = null,
     private val userProfilePromptBuilder: UserProfilePromptBuilder = UserProfilePromptBuilder(),
     private val taskContextStorage: TaskContextStorage = FileTaskContextStorage(),
+    private val chatHistoryStorage: ChatHistoryStorage = FileChatHistoryStorage(),
     initialConfig: ContextConfig = ContextConfig.DEFAULT
-) : ChatAgent {
+) : ChatAgent, ChatAgentIntrospection {
+    private data class SessionMetrics(
+        val compressionAttempts: AtomicLong = AtomicLong(0),
+        val compressionSuccesses: AtomicLong = AtomicLong(0),
+        val compressionFailures: AtomicLong = AtomicLong(0),
+        val recallCandidates: AtomicLong = AtomicLong(0),
+        val recallHits: AtomicLong = AtomicLong(0),
+        val recallDuplicatesFiltered: AtomicLong = AtomicLong(0)
+    )
+
     private data class SessionState(
+        val createdAt: Long,
+        var lastAccessedAt: Long,
         var activeBranchId: String = "main",
-        val branches: MutableMap<String, BranchState>
+        val branches: MutableMap<String, BranchState>,
+        val metrics: SessionMetrics = SessionMetrics()
     )
 
     private val sessions = ConcurrentHashMap<String, SessionState>()
+    private val loadedHistories = ConcurrentHashMap<String, Boolean>()
+    private val dirtyHistories = ConcurrentHashMap<String, Boolean>()
 
     private val _config = AtomicReference(initialConfig)
     val config: ContextConfig
@@ -61,30 +81,112 @@ class CompressingChatAgent(
 
     companion object {
         private const val TAG = "CompressingChatAgent"
+        private const val MAX_SESSIONS = 64
+        private const val SESSION_TTL_MS = 7L * 24 * 60 * 60 * 1000
+        private const val PROTECTED_SESSION_ID = "chat-ui"
     }
 
     private fun log(message: String) = FileLogger.log(TAG, message)
     private fun section(title: String) = FileLogger.section(title)
-
-    private fun getSession(sessionId: String): SessionState =
-        sessions.computeIfAbsent(sessionId) {
-            val activeProfile = userProfileRepository?.getCachedActiveProfile()
-            SessionState(
-                branches = mutableMapOf("main" to BranchState(userProfile = activeProfile))
-            )
+    private val fsmLogger: Logger =
+        object : Logger {
+            override fun log(tag: String, message: String) = FileLogger.log(tag, message)
         }
 
+    private fun getSession(sessionId: String): SessionState {
+        val now = System.currentTimeMillis()
+        val session =
+            sessions.computeIfAbsent(sessionId) {
+                val activeProfile = userProfileRepository?.getCachedActiveProfile()
+                SessionState(
+                    createdAt = now,
+                    lastAccessedAt = now,
+                    branches =
+                        mutableMapOf("main" to BranchState(userProfile = activeProfile))
+                )
+            }
+        synchronized(session) { session.lastAccessedAt = now }
+        return session
+    }
+
+    private suspend fun evictSessionsIfNeeded() {
+        val now = System.currentTimeMillis()
+        val snapshot =
+            sessions.entries.mapNotNull { (id, s) ->
+                val last = synchronized(s) { s.lastAccessedAt }
+                Triple(id, s, last)
+            }
+        if (snapshot.size <= MAX_SESSIONS) {
+            val ttlExpired =
+                snapshot.any { (id, _, last) ->
+                    id != PROTECTED_SESSION_ID && (now - last) > SESSION_TTL_MS
+                }
+            if (!ttlExpired) return
+        }
+
+        val ttlEvict =
+            snapshot
+                .filter { (id, _, last) ->
+                    id != PROTECTED_SESSION_ID && (now - last) > SESSION_TTL_MS
+                }
+                .map { it.first }
+
+        val lruEvict =
+            if (snapshot.size <= MAX_SESSIONS) {
+                emptyList()
+            } else {
+                val over = snapshot.size - MAX_SESSIONS
+                snapshot
+                    .filter { (id, _, _) -> id != PROTECTED_SESSION_ID }
+                    .sortedBy { it.third }
+                    .take(over)
+                    .map { it.first }
+            }
+
+        val toEvict = (ttlEvict + lruEvict).distinct()
+        if (toEvict.isEmpty()) return
+
+        toEvict.forEach { id ->
+            val removed = sessions.remove(id) ?: return@forEach
+            removed.branches.forEach { (branchId, branch) ->
+                val key = contextKey(id, branchId)
+                val wasDirty = dirtyHistories.remove(key) != null
+                if (wasDirty) {
+                    val messages = synchronized(branch) { branch.messages.toList() }
+                    runCatching { chatHistoryStorage.saveHistory(key, messages) }.onFailure { e ->
+                        AppLogger.e(
+                            TAG,
+                            "Failed to persist history for evicted sessionId=$id branchId=$branchId",
+                            e
+                        )
+                    }
+                }
+                loadedHistories.remove(key)
+                summaryStorage.clear(key)
+            }
+            pendingCompressions.keys.removeIf { it.startsWith("$id::") }
+        }
+    }
+
     private fun getBranch(sessionId: String, branchId: String): BranchState =
-        getSession(sessionId).branches.getOrPut(branchId) {
-            BranchState(userProfile = userProfileRepository?.getCachedActiveProfile())
+        getSession(sessionId).let { session ->
+            synchronized(session) {
+                session.branches.getOrPut(branchId) {
+                    BranchState(userProfile = userProfileRepository?.getCachedActiveProfile())
+                }
+            }
         }
 
     private fun getActiveBranchState(sessionId: String): BranchState {
         val session = getSession(sessionId)
-        return getBranch(sessionId, session.activeBranchId)
+        val branchId = synchronized(session) { session.activeBranchId }
+        return getBranch(sessionId, branchId)
     }
 
-    private fun currentBranchId(sessionId: String): String = getSession(sessionId).activeBranchId
+    private fun currentBranchId(sessionId: String): String =
+        getSession(sessionId).let { session ->
+            synchronized(session) { session.activeBranchId }
+        }
 
     private fun contextKey(sessionId: String, branchId: String): String = "$sessionId::$branchId"
 
@@ -105,6 +207,42 @@ class CompressingChatAgent(
         }
     }
 
+    private fun markHistoryDirty(sessionId: String, branchId: String) {
+        dirtyHistories[contextKey(sessionId, branchId)] = true
+    }
+
+    private suspend fun loadHistoryIfNeeded(
+        sessionId: String,
+        branchId: String,
+        branch: BranchState
+    ) {
+        val key = contextKey(sessionId, branchId)
+        if (loadedHistories.putIfAbsent(key, true) != null) return
+        val loaded =
+            runCatching { chatHistoryStorage.loadHistory(key) }
+                .onFailure { e -> AppLogger.e(TAG, "Failed to load history for $key", e) }
+                .getOrElse { emptyList() }
+        if (loaded.isEmpty()) return
+        synchronized(branch) {
+            if (branch.messages.isEmpty()) {
+                branch.messages.addAll(loaded)
+            }
+        }
+    }
+
+    private suspend fun persistHistoryIfDirty(
+        sessionId: String,
+        branchId: String,
+        branch: BranchState
+    ) {
+        val key = contextKey(sessionId, branchId)
+        if (dirtyHistories.remove(key) == null) return
+        val messages = synchronized(branch) { branch.messages.toList() }
+        runCatching { chatHistoryStorage.saveHistory(key, messages) }.onFailure { e ->
+            AppLogger.e(TAG, "Failed to persist history for $key", e)
+        }
+    }
+
     private fun removeOldestFromBranch(
         sessionId: String,
         branchId: String,
@@ -119,14 +257,24 @@ class CompressingChatAgent(
                 }
             }
         }
+        if (removed.isNotEmpty()) {
+            markHistoryDirty(sessionId, branchId)
+        }
         return removed
     }
 
-    override suspend fun getHistory(sessionId: String): List<Message> =
-        getActiveBranchState(sessionId).messages.toList()
+    override suspend fun getHistory(sessionId: String): List<Message> {
+        evictSessionsIfNeeded()
+        val session = getSession(sessionId)
+        val branchId = synchronized(session) { session.activeBranchId }
+        val branch = getBranch(sessionId, branchId)
+        loadHistoryIfNeeded(sessionId, branchId, branch)
+        return synchronized(branch) { branch.messages.toList() }
+    }
 
-    override suspend fun getSessionMessages(sessionId: String): List<Message> =
-        getActiveBranchState(sessionId).messages.toList()
+    override suspend fun getSessionMessages(sessionId: String): List<Message> {
+        return getHistory(sessionId)
+    }
 
     override fun getSessionTokenStatistics(
         sessionId: String,
@@ -146,7 +294,11 @@ class CompressingChatAgent(
         delegate.reset(sessionId)
         val session = sessions.remove(sessionId)
         session?.branches?.keys?.forEach { branchId ->
-            summaryStorage.clear(contextKey(sessionId, branchId))
+            val key = contextKey(sessionId, branchId)
+            summaryStorage.clear(key)
+            loadedHistories.remove(key)
+            dirtyHistories.remove(key)
+            runCatching { chatHistoryStorage.deleteHistory(key) }
         }
         session?.branches?.keys?.forEach { branchId ->
             runCatching { taskContextStorage.delete(sessionId, branchId) }
@@ -156,12 +308,14 @@ class CompressingChatAgent(
     }
 
     override fun truncateHistory(sessionId: String, keepLast: Int) {
+        val branchId = currentBranchId(sessionId)
         val branch = getActiveBranchState(sessionId)
         synchronized(branch) {
             while (branch.messages.size > keepLast) {
                 branch.messages.removeAt(0)
             }
         }
+        markHistoryDirty(sessionId, branchId)
         val currentConfig = config
         val blocks = summaryStorage.getBlocks(contextKey(sessionId, currentBranchId(sessionId)))
         if (blocks.size > currentConfig.maxSummaryBlocks) {
@@ -172,6 +326,7 @@ class CompressingChatAgent(
     }
 
     override fun removeOldestMessages(sessionId: String, count: Int): List<Message> {
+        val branchId = currentBranchId(sessionId)
         val branch = getActiveBranchState(sessionId)
         val removed = mutableListOf<Message>()
         synchronized(branch) {
@@ -180,6 +335,9 @@ class CompressingChatAgent(
                     removed.add(branch.messages.removeAt(0))
                 }
             }
+        }
+        if (removed.isNotEmpty()) {
+            markHistoryDirty(sessionId, branchId)
         }
         return removed
     }
@@ -192,228 +350,353 @@ class CompressingChatAgent(
         temperature: Double
     ): ChatResult {
         val currentConfig = config
+        evictSessionsIfNeeded()
         val session = getSession(sessionId)
-        val branchId = session.activeBranchId
+        val branchId = synchronized(session) { session.activeBranchId }
         val branch = getBranch(sessionId, branchId)
         val sessionKey = contextKey(sessionId, branchId)
 
+        loadHistoryIfNeeded(sessionId, branchId, branch)
         loadTaskContextIfNeeded(sessionId, branchId, branch)
-        val fsm =
-            TaskStateMachine(
-                sessionId = sessionId,
-                branchId = branchId,
-                branchState = branch,
-                storage = taskContextStorage
-            )
-        fsm.maybeStartPlanning(userMessage)
-        fsm.handleUserMessage(userMessage)
-        fsm.advance(userMessage = userMessage)
-
-        section("SEND START")
-        log("sessionId=$sessionId, branchId=$branchId, model=$model")
-        log("Config: $currentConfig")
-
-        val cachedProfile = userProfileRepository?.getCachedActiveProfile()
-        // Важно: профиль может быть null (режим "Без профиля") — в этом случае очищаем профиль
-        // ветки,
-        // иначе он "залипнет" со старого выбора.
-        synchronized(branch) { branch.userProfile = cachedProfile }
-        val profilePrompt =
-            synchronized(branch) { branch.userProfile }
-                ?.let { userProfilePromptBuilder.build(it) }
-                .orEmpty()
-        val systemPromptWithProfile =
-            if (profilePrompt.isBlank()) {
-                systemPrompt
-            } else {
-                systemPrompt + "\n\n" + profilePrompt
+        try {
+            if (currentConfig.enableTaskStateMachine) {
+                val fsm =
+                    TaskStateMachine(
+                        sessionId = sessionId,
+                        branchId = branchId,
+                        branchState = branch,
+                        storage = taskContextStorage,
+                        logger = fsmLogger
+                    )
+                fsm.maybeStartPlanning(userMessage)
+                fsm.handleUserMessage(userMessage)
+                fsm.advance(userMessage = userMessage)
             }
 
-        if (currentConfig.enableFactsMemory) {
-            val existingWm = synchronized(branch) { snapshotWorkingMemory(branch) }
-            val ops = factsExtractor.extractOperations(userMessage, existingWm)
+            section("SEND START")
+            log("sessionId=$sessionId, branchId=$branchId, model=$model")
+            log("Config: $currentConfig")
 
-            if (ops.isNotEmpty()) {
-                val forgetOps =
+            val cachedProfile = userProfileRepository?.getCachedActiveProfile()
+            // Важно: профиль может быть null (режим "Без профиля") — в этом случае очищаем профиль
+            // ветки,
+            // иначе он "залипнет" со старого выбора.
+            synchronized(branch) { branch.userProfile = cachedProfile }
+            val activeProfile = synchronized(branch) { branch.userProfile }
+            val forbidUserName = activeProfile?.invariants?.forbidsAddressingUserByName() == true
+            val profilePrompt = activeProfile?.let { userProfilePromptBuilder.build(it) }.orEmpty()
+            val systemPromptWithProfile =
+                if (profilePrompt.isBlank()) {
+                    systemPrompt
+                } else {
+                    systemPrompt + "\n\n" + profilePrompt
+                }
+
+            val previousUserNameFact =
+                if (!forbidUserName) {
+                    null
+                } else {
                     synchronized(branch) {
-                        applyExtractOperations(branch.workingMemory, ops)
-                        trimWorkingMemory(branch.workingMemory, currentConfig.maxFacts)
+                        branch.workingMemory[WmCategory.USER_INFO]?.entries
+                            ?.firstOrNull { (k, _) ->
+                                k.equals("user_name", ignoreCase = true)
+                            }
+                            ?.value
+                            ?.value
                     }
-                (ops + forgetOps).forEach { log("MemoryOp: $it") }
-                val totalFacts = synchronized(branch) { totalFacts(branch.workingMemory) }
-                log("Facts updated: ops=${ops.size}, totalFacts=$totalFacts")
-            }
-        }
+                }
 
-        if (currentConfig.enableAutoCompression) {
-            log("Auto-compression ENABLED, checking...")
-            val compressionResult = tryCompressIfNeeded(sessionId, branchId, currentConfig)
-            when (compressionResult) {
-                is CompressionResult.Success -> {
-                    log("SUCCESS Compression: block ${compressionResult.newBlock.id}")
-                    persistImportantFactsFromWorkingMemory(branch, limit = 24)
-                    _compressionEvents.emit(CompressionEvent.Complete(compressionResult.newBlock))
-                }
-                is CompressionResult.Partial -> {
-                    log("PARTIAL Compression: ${compressionResult.warning}")
-                    persistImportantFactsFromWorkingMemory(branch, limit = 24)
-                    _compressionEvents.emit(CompressionEvent.Complete(compressionResult.newBlock))
-                }
-                is CompressionResult.Failed -> {
-                    log("FAILED Compression: ${compressionResult.error.message}")
-                    _compressionEvents.emit(CompressionEvent.Error(compressionResult.error))
-                }
-                CompressionResult.NotNeeded -> {
-                    log("Compression NOT NEEDED")
+            if (forbidUserName) {
+                synchronized(branch) {
+                    val group = branch.workingMemory[WmCategory.USER_INFO]
+                    if (group != null) {
+                        val keysToRemove =
+                            group.keys.filter { it.equals("user_name", ignoreCase = true) }
+                        keysToRemove.forEach { group.remove(it) }
+                        if (group.isEmpty()) branch.workingMemory.remove(WmCategory.USER_INFO)
+                    }
                 }
             }
-        } else {
-            log("Auto-compression DISABLED")
-        }
 
-        val historySnapshot = synchronized(branch) { branch.messages.toList() }
-        val factsSnapshot = synchronized(branch) { snapshotWorkingMemory(branch) }
-        val factsCount = factsSnapshot.values.sumOf { it.size }
-        log(
-            "Current messages count: ${historySnapshot.size}, facts=$factsCount (groups=${factsSnapshot.size})"
-        )
+            if (currentConfig.enableFactsMemory) {
+                val existingWm = synchronized(branch) { snapshotWorkingMemory(branch) }
+                val ops =
+                    factsExtractor.extractOperations(userMessage, existingWm).let { extracted ->
+                        if (!forbidUserName) extracted
+                        else
+                            extracted.filterNot { op ->
+                                op.category == WmCategory.USER_INFO &&
+                                        op.key.equals("user_name", ignoreCase = true)
+                            }
+                    }
 
-        val ltmSnapshot = longTermMemoryStore.snapshot()
-        val ltmRecalled = ltmRecaller.recall(userMessage, ltmSnapshot, model)
-        val ltmFiltered =
-            ltmRecalled.filterNot { item ->
-                factsSnapshot[item.category]?.get(item.key)?.value == item.entry.value
+                if (ops.isNotEmpty()) {
+                    val forgetOps =
+                        synchronized(branch) {
+                            applyExtractOperations(branch.workingMemory, ops)
+                            trimWorkingMemory(branch.workingMemory, currentConfig.maxFacts)
+                        }
+                    (ops + forgetOps).forEach { log("MemoryOp: $it") }
+                    val totalFacts = synchronized(branch) { totalFacts(branch.workingMemory) }
+                    log("Facts updated: ops=${ops.size}, totalFacts=$totalFacts")
+                }
             }
-        val ltmText =
-            if (ltmFiltered.isEmpty()) {
-                ""
+
+            if (currentConfig.enableAutoCompression) {
+                log("Auto-compression ENABLED, checking...")
+                val compressionResult = tryCompressIfNeeded(sessionId, branchId, currentConfig)
+                when (compressionResult) {
+                    is CompressionResult.Success -> {
+                        log("SUCCESS Compression: block ${compressionResult.newBlock.id}")
+                        persistImportantFactsFromWorkingMemory(branch, limit = 24)
+                        _compressionEvents.emit(
+                            CompressionEvent.Complete(compressionResult.newBlock)
+                        )
+                    }
+
+                    is CompressionResult.Partial -> {
+                        log("PARTIAL Compression: ${compressionResult.warning}")
+                        persistImportantFactsFromWorkingMemory(branch, limit = 24)
+                        _compressionEvents.emit(
+                            CompressionEvent.Complete(compressionResult.newBlock)
+                        )
+                    }
+
+                    is CompressionResult.Failed -> {
+                        log("FAILED Compression: ${compressionResult.error.message}")
+                        _compressionEvents.emit(CompressionEvent.Error(compressionResult.error))
+                    }
+
+                    CompressionResult.NotNeeded -> {
+                        log("Compression NOT NEEDED")
+                    }
+                }
             } else {
-                buildString {
-                    append("[LONG_TERM_MEMORY]\n")
-                    ltmFiltered.groupBy { it.category }.toSortedMap().forEach { (cat, items) ->
-                        append("[${cat.name}]\n")
-                        items.sortedBy { it.key }.forEach { item ->
-                            append(
-                                "${item.key}: ${item.entry.value} (confidence=${"%.2f".format(item.entry.confidence)}, useCount=${item.entry.useCount})\n"
-                            )
+                log("Auto-compression DISABLED")
+            }
+
+            val historySnapshot = synchronized(branch) { branch.messages.toList() }
+            val factsSnapshotRaw = synchronized(branch) { snapshotWorkingMemory(branch) }
+            val factsSnapshot =
+                if (forbidUserName) factsSnapshotRaw.withoutUserNameFact() else factsSnapshotRaw
+            val factsCount = factsSnapshot.values.sumOf { it.size }
+            log(
+                "Current messages count: ${historySnapshot.size}, facts=$factsCount (groups=${factsSnapshot.size})"
+            )
+
+            val ltmSnapshot = longTermMemoryStore.snapshot()
+            val ltmSnapshotForRecall =
+                if (forbidUserName) {
+                    ltmSnapshot.withoutUserNameMemoryItem()
+                } else {
+                    ltmSnapshot
+                }
+            val ltmRecalled = ltmRecaller.recall(userMessage, ltmSnapshotForRecall, model)
+            session.metrics.recallCandidates.addAndGet(ltmRecalled.size.toLong())
+            val ltmFiltered0 =
+                ltmRecalled.filterNot { item ->
+                    factsSnapshot[item.category]?.get(item.key)?.value == item.entry.value
+                }
+            val dupFiltered = (ltmRecalled.size - ltmFiltered0.size).coerceAtLeast(0)
+            if (dupFiltered > 0) {
+                session.metrics.recallDuplicatesFiltered.addAndGet(dupFiltered.toLong())
+            }
+            val ltmFiltered =
+                if (!forbidUserName) {
+                    ltmFiltered0
+                } else {
+                    ltmFiltered0.filterNot { item ->
+                        item.category == WmCategory.USER_INFO &&
+                                item.key.equals("user_name", ignoreCase = true)
+                    }
+                }
+            session.metrics.recallHits.addAndGet(ltmFiltered.size.toLong())
+            val ltmText =
+                if (ltmFiltered.isEmpty()) {
+                    ""
+                } else {
+                    buildString {
+                        append("[LONG_TERM_MEMORY]\n")
+                        ltmFiltered.groupBy { it.category }.toSortedMap().forEach { (cat, items)
+                            ->
+                            append("[${cat.name}]\n")
+                            items.sortedBy { it.key }.forEach { item ->
+                                append(
+                                    "${item.key}: ${item.entry.value} (confidence=${"%.2f".format(item.entry.confidence)}, useCount=${item.entry.useCount})\n"
+                                )
+                            }
+                        }
+                        append("[END LONG_TERM_MEMORY]\n")
+                    }
+                }
+            if (ltmFiltered.isNotEmpty()) {
+                ltmFiltered.forEach { item ->
+                    log(
+                        "MemoryOp: " +
+                                MemoryOperation(
+                                    op = "RECALL",
+                                    fromLayer = MemoryLayer.LTM,
+                                    toLayer = MemoryLayer.WM,
+                                    category = item.category,
+                                    key = item.key,
+                                    value = item.entry.value,
+                                    confidence = item.entry.confidence
+                                )
+                    )
+                }
+            }
+            val systemPromptWithLtm =
+                if (ltmText.isBlank()) {
+                    systemPromptWithProfile
+                } else {
+                    systemPromptWithProfile + "\n\n" + ltmText
+                }
+
+            val forbiddenNamesForGate: Set<String> =
+                if (!forbidUserName) {
+                    emptySet()
+                } else {
+                    buildSet {
+                        activeProfile
+                            ?.identity
+                            ?.displayName
+                            ?.trim()
+                            ?.takeIf { it.isNotBlank() }
+                            ?.let { add(it) }
+                        previousUserNameFact?.trim()?.takeIf { it.isNotBlank() }?.let {
+                            add(it)
+                        }
+                        addAll(extractPossibleUserNames(userMessage))
+                        ltmSnapshot
+                            .asSequence()
+                            .filter { it.category == WmCategory.USER_INFO }
+                            .filter { it.key.equals("user_name", ignoreCase = true) }
+                            .map { it.entry.value.trim() }
+                            .filter { it.isNotBlank() }
+                            .forEach { add(it) }
+                    }
+                }
+
+            val composedContext =
+                contextComposer
+                    .compose(
+                        sessionId = sessionKey,
+                        systemPrompt = systemPromptWithLtm,
+                        userMessage = userMessage,
+                        historyMessages = historySnapshot,
+                        facts = factsSnapshot,
+                        config = config
+                    )
+                    .copy(taskContext = synchronized(branch) { branch.taskContext })
+
+            log(
+                "Composed: ${composedContext.summaryBlocks.size} summaries + ${composedContext.recentMessages.size} recent = ~${composedContext.totalEstimatedTokens} tokens"
+            )
+
+            val enhancedSystemPrompt = composedContext.buildSystemPromptWithContext()
+
+            if (composedContext.summaryBlocks.isNotEmpty()) {
+                log("Enhanced prompt length: ${enhancedSystemPrompt.length}")
+                log("=== FULL SYSTEM PROMPT WITH CONTEXT ===")
+                log(enhancedSystemPrompt.take(500))
+                if (enhancedSystemPrompt.length > 500)
+                    log("... (truncated, total ${enhancedSystemPrompt.length} chars)")
+                log("=== END SYSTEM PROMPT ===")
+            }
+
+            section("SEND END")
+
+            val result =
+                delegate.sendWithContext(
+                    sessionId = sessionId,
+                    contextMessages = composedContext.recentMessages,
+                    userMessage = userMessage,
+                    model = model,
+                    systemPrompt = enhancedSystemPrompt,
+                    temperature = temperature
+                )
+
+            val gatedResult: ChatResult =
+                if (result is ChatResult.Success && forbidUserName) {
+                    val (sanitized, changed) =
+                        sanitizeAssistantTextNoUserName(
+                            text = result.message.content,
+                            forbiddenNames = forbiddenNamesForGate
+                        )
+                    if (changed) {
+                        log("OutputGate: assistant message sanitized by invariant policy")
+                        ChatResult.Success(
+                            message = result.message.copy(content = sanitized),
+                            metrics = result.metrics
+                        )
+                    } else {
+                        result
+                    }
+                } else {
+                    result
+                }
+
+            if (gatedResult is ChatResult.Success) {
+                val stmOps = mutableListOf<MemoryOperation>()
+                val removed = mutableListOf<Message>()
+                synchronized(branch) {
+                    branch.messages.add(Message.user(userMessage))
+                    branch.messages.add(gatedResult.message)
+                    stmOps +=
+                        MemoryOperation(
+                            op = "OBSERVE",
+                            fromLayer = null,
+                            toLayer = MemoryLayer.STM,
+                            category = null,
+                            key = "user_message",
+                            value = userMessage,
+                            confidence = 1.0f
+                        )
+                    stmOps +=
+                        MemoryOperation(
+                            op = "OBSERVE",
+                            fromLayer = null,
+                            toLayer = MemoryLayer.STM,
+                            category = null,
+                            key = "assistant_message",
+                            value = gatedResult.message.content,
+                            confidence = 1.0f
+                        )
+                    if (currentConfig.strategy == ContextStrategy.SLIDING_WINDOW) {
+                        while (branch.messages.size > currentConfig.keepLastN) {
+                            removed += branch.messages.removeAt(0)
                         }
                     }
-                    append("[END LONG_TERM_MEMORY]\n")
                 }
-            }
-        if (ltmFiltered.isNotEmpty()) {
-            ltmFiltered.forEach { item ->
-                log(
-                    "MemoryOp: " +
-                            MemoryOperation(
-                                op = "RECALL",
-                                fromLayer = MemoryLayer.LTM,
-                                toLayer = MemoryLayer.WM,
-                                category = item.category,
-                                key = item.key,
-                                value = item.entry.value,
-                                confidence = item.entry.confidence
-                            )
-                )
-            }
-        }
-        val systemPromptWithLtm =
-            if (ltmText.isBlank()) {
-                systemPromptWithProfile
-            } else {
-                systemPromptWithProfile + "\n\n" + ltmText
+                markHistoryDirty(sessionId, branchId)
+                stmOps.forEach { log("MemoryOp: $it") }
+                removed.forEach { msg ->
+                    log(
+                        "MemoryOp: " +
+                                MemoryOperation(
+                                    op = "FORGET",
+                                    fromLayer = MemoryLayer.STM,
+                                    toLayer = null,
+                                    category = null,
+                                    key = msg.role.name,
+                                    value = msg.content,
+                                    confidence = 1.0f
+                                )
+                    )
+                }
+                advanceTask(sessionId, assistantMessage = gatedResult.message.content)
             }
 
-        val composedContext =
-            contextComposer
-                .compose(
-                    sessionId = sessionKey,
-                    systemPrompt = systemPromptWithLtm,
-                    userMessage = userMessage,
-                    historyMessages = historySnapshot,
-                    facts = factsSnapshot,
-                    config = config
-                )
-                .copy(taskContext = synchronized(branch) { branch.taskContext })
-
-        log(
-            "Composed: ${composedContext.summaryBlocks.size} summaries + ${composedContext.recentMessages.size} recent = ~${composedContext.totalEstimatedTokens} tokens"
-        )
-
-        val enhancedSystemPrompt = composedContext.buildSystemPromptWithContext()
-
-        if (composedContext.summaryBlocks.isNotEmpty()) {
-            log("Enhanced prompt length: ${enhancedSystemPrompt.length}")
-            log("=== FULL SYSTEM PROMPT WITH CONTEXT ===")
-            log(enhancedSystemPrompt.take(500))
-            if (enhancedSystemPrompt.length > 500)
-                log("... (truncated, total ${enhancedSystemPrompt.length} chars)")
-            log("=== END SYSTEM PROMPT ===")
-        }
-
-        section("SEND END")
-
-        val result =
-            delegate.sendWithContext(
-                sessionId = sessionId,
-                contextMessages = composedContext.recentMessages,
-                userMessage = userMessage,
-                model = model,
-                systemPrompt = enhancedSystemPrompt,
-                temperature = temperature
+            val m = session.metrics
+            log(
+                "Metrics: sessionId=$sessionId branchId=$branchId " +
+                        "compression=${m.compressionSuccesses.get()}/${m.compressionAttempts.get()} fail=${m.compressionFailures.get()} " +
+                        "recall=${m.recallHits.get()}/${m.recallCandidates.get()} dup=${m.recallDuplicatesFiltered.get()}"
             )
-
-        if (result is ChatResult.Success) {
-            val stmOps = mutableListOf<MemoryOperation>()
-            val removed = mutableListOf<Message>()
-            synchronized(branch) {
-                branch.messages.add(Message.user(userMessage))
-                branch.messages.add(result.message)
-                stmOps +=
-                    MemoryOperation(
-                        op = "OBSERVE",
-                        fromLayer = null,
-                        toLayer = MemoryLayer.STM,
-                        category = null,
-                        key = "user_message",
-                        value = userMessage,
-                        confidence = 1.0f
-                    )
-                stmOps +=
-                    MemoryOperation(
-                        op = "OBSERVE",
-                        fromLayer = null,
-                        toLayer = MemoryLayer.STM,
-                        category = null,
-                        key = "assistant_message",
-                        value = result.message.content,
-                        confidence = 1.0f
-                    )
-                if (currentConfig.strategy == ContextStrategy.SLIDING_WINDOW) {
-                    while (branch.messages.size > currentConfig.keepLastN) {
-                        removed += branch.messages.removeAt(0)
-                    }
-                }
-            }
-            stmOps.forEach { log("MemoryOp: $it") }
-            removed.forEach { msg ->
-                log(
-                    "MemoryOp: " +
-                            MemoryOperation(
-                                op = "FORGET",
-                                fromLayer = MemoryLayer.STM,
-                                toLayer = null,
-                                category = null,
-                                key = msg.role.name,
-                                value = msg.content,
-                                confidence = 1.0f
-                            )
-                )
-            }
-            advanceTask(sessionId, assistantMessage = result.message.content)
+            return gatedResult
+        } finally {
+            persistHistoryIfDirty(sessionId, branchId, branch)
         }
-
-        return result
     }
 
     private suspend fun tryCompressIfNeeded(
@@ -441,6 +724,7 @@ class CompressingChatAgent(
             if (!shouldCompress) {
                 return CompressionResult.NotNeeded
             }
+            getSession(sessionId).metrics.compressionAttempts.incrementAndGet()
 
             log(
                 "Compression condition MET! Taking ${currentConfig.compressionBlockSize} oldest messages..."
@@ -462,6 +746,7 @@ class CompressingChatAgent(
 
             return when (summaryResult) {
                 is SummaryResult.Success -> {
+                    getSession(sessionId).metrics.compressionSuccesses.incrementAndGet()
                     log("Summary generated (${summaryResult.block.estimatedTokens} tokens)")
 
                     log(
@@ -502,6 +787,7 @@ class CompressingChatAgent(
                     CompressionResult.Success(summaryResult.block)
                 }
                 is SummaryResult.Error -> {
+                    getSession(sessionId).metrics.compressionFailures.incrementAndGet()
                     log("Summary generation ERROR: ${summaryResult.exception.message}")
                     CompressionResult.Failed(summaryResult.exception, messagesToCompress)
                 }
@@ -512,12 +798,12 @@ class CompressingChatAgent(
         }
     }
 
-    fun updateConfig(newConfig: ContextConfig) {
+    override fun updateConfig(newConfig: ContextConfig) {
         _config.set(newConfig)
         log("Config updated: $newConfig")
     }
 
-    fun getSummaryBlocks(sessionId: String): List<SummaryBlock> =
+    override fun getSummaryBlocks(sessionId: String): List<SummaryBlock> =
         summaryStorage.getBlocks(contextKey(sessionId, currentBranchId(sessionId)))
 
     fun getFacts(sessionId: String): Map<String, Map<String, String>> {
@@ -530,17 +816,17 @@ class CompressingChatAgent(
         return out
     }
 
-    fun getWorkingMemory(sessionId: String): Map<WmCategory, Map<String, FactEntry>> {
+    override fun getWorkingMemory(sessionId: String): Map<WmCategory, Map<String, FactEntry>> {
         val branch = getActiveBranchState(sessionId)
         return synchronized(branch) { snapshotWorkingMemory(branch) }
     }
 
-    fun setWorkingMemoryEntry(
+    override fun setWorkingMemoryEntry(
         sessionId: String,
         category: WmCategory,
         key: String,
         value: String,
-        confidence: Float = 1.0f
+        confidence: Float
     ) {
         val k = key.trim()
         val v = value.trim()
@@ -574,7 +860,11 @@ class CompressingChatAgent(
         }
     }
 
-    fun deleteWorkingMemoryEntry(sessionId: String, category: WmCategory, key: String): Boolean {
+    override fun deleteWorkingMemoryEntry(
+        sessionId: String,
+        category: WmCategory,
+        key: String
+    ): Boolean {
         val k = key.trim()
         if (k.isBlank()) return false
         val branch = getActiveBranchState(sessionId)
@@ -587,33 +877,55 @@ class CompressingChatAgent(
         return removed
     }
 
-    fun getStmCount(sessionId: String): Int {
+    override fun getStmCount(sessionId: String): Int {
         val branch = getActiveBranchState(sessionId)
         return synchronized(branch) { branch.messages.size }
     }
 
-    fun getShortTermMessages(sessionId: String): List<Message> {
+    override fun getShortTermMessages(sessionId: String): List<Message> {
         val branch = getActiveBranchState(sessionId)
         return synchronized(branch) { branch.messages.toList() }
     }
 
-    fun clearShortTermMemory(sessionId: String): Int {
+    override fun clearShortTermMemory(sessionId: String): Int {
+        val branchId = currentBranchId(sessionId)
         val branch = getActiveBranchState(sessionId)
         var n = 0
         synchronized(branch) {
             n = branch.messages.size
             branch.messages.clear()
         }
+        if (n > 0) {
+            markHistoryDirty(sessionId, branchId)
+        }
         return n
     }
 
-    suspend fun getLongTermMemorySnapshot(): List<MemoryItem> = longTermMemoryStore.snapshot()
+    override fun getMetricsSnapshot(sessionId: String): AgentMetricsSnapshot {
+        val session = getSession(sessionId)
+        val branch = getActiveBranchState(sessionId)
+        val wm = synchronized(branch) { snapshotWorkingMemory(branch) }
+        return AgentMetricsSnapshot(
+            sessionsCount = sessions.size,
+            wmGroups = wm.size,
+            wmFacts = wm.values.sumOf { it.size },
+            compressionAttempts = session.metrics.compressionAttempts.get(),
+            compressionSuccesses = session.metrics.compressionSuccesses.get(),
+            compressionFailures = session.metrics.compressionFailures.get(),
+            recallCandidates = session.metrics.recallCandidates.get(),
+            recallHits = session.metrics.recallHits.get(),
+            recallDuplicatesFiltered = session.metrics.recallDuplicatesFiltered.get()
+        )
+    }
 
-    suspend fun saveToLtm(
+    override suspend fun getLongTermMemorySnapshot(): List<MemoryItem> =
+        longTermMemoryStore.snapshot()
+
+    override suspend fun saveToLtm(
         category: WmCategory,
         key: String,
         value: String,
-        confidence: Float = 1.0f
+        confidence: Float
     ): Boolean {
         val k = key.trim()
         val v = value.trim()
@@ -636,29 +948,34 @@ class CompressingChatAgent(
         return longTermMemoryStore.upsert(item)
     }
 
-    suspend fun deleteFromLtmByKey(key: String): Int {
+    override suspend fun deleteFromLtmByKey(key: String): Int {
         val k = key.trim()
         if (k.isBlank()) return 0
         return longTermMemoryStore.deleteWhere { it.key == k }
     }
 
-    suspend fun findInLtm(query: String, limit: Int = 10): List<MemoryItem> =
+    override suspend fun findInLtm(query: String, limit: Int): List<MemoryItem> =
         longTermMemoryStore.search(query, limit)
 
-    fun getBranchIds(sessionId: String): List<String> = getSession(sessionId).branches.keys.sorted()
+    override fun getBranchIds(sessionId: String): List<String> =
+        getSession(sessionId).let { session ->
+            synchronized(session) { session.branches.keys.toList().sorted() }
+        }
 
-    fun getActiveBranchId(sessionId: String): String = currentBranchId(sessionId)
+    override fun getActiveBranchId(sessionId: String): String = currentBranchId(sessionId)
 
-    fun setActiveBranch(sessionId: String, branchId: String) {
+    override fun setActiveBranch(sessionId: String, branchId: String) {
         val session = getSession(sessionId)
-        if (!session.branches.containsKey(branchId)) return
-        session.activeBranchId = branchId
+        synchronized(session) {
+            if (!session.branches.containsKey(branchId)) return
+            session.activeBranchId = branchId
+        }
         log("Active branch updated: sessionId=$sessionId -> $branchId")
     }
 
-    fun createBranchFromCheckpoint(sessionId: String, checkpointSize: Int): String {
+    override fun createBranchFromCheckpoint(sessionId: String, checkpointSize: Int): String {
         val session = getSession(sessionId)
-        val sourceBranchId = session.activeBranchId
+        val sourceBranchId = synchronized(session) { session.activeBranchId }
         val sourceBranch = getBranch(sessionId, sourceBranchId)
         val sourceMessages = synchronized(sourceBranch) { sourceBranch.messages.toList() }
         val sourceProfile = synchronized(sourceBranch) { sourceBranch.userProfile }
@@ -680,24 +997,26 @@ class CompressingChatAgent(
         val base = "branch"
         var i = 1
         var id = "$base-$i"
-        while (session.branches.containsKey(id)) {
-            i++
-            id = "$base-$i"
+        synchronized(session) {
+            while (session.branches.containsKey(id)) {
+                i++
+                id = "$base-$i"
+            }
+            session.branches[id] =
+                BranchState(
+                    messages = forkMessages.toMutableList(),
+                    workingMemory = forkWm,
+                    userProfile = sourceProfile
+                )
         }
-
-        session.branches[id] =
-            BranchState(
-                messages = forkMessages.toMutableList(),
-                workingMemory = forkWm,
-                userProfile = sourceProfile
-            )
         log(
             "Branch created: sessionId=$sessionId source=$sourceBranchId checkpointSize=$size -> $id"
         )
+        markHistoryDirty(sessionId, id)
         return id
     }
 
-    fun getComposedContext(
+    override fun getComposedContext(
         sessionId: String,
         systemPrompt: String,
         userMessage: String
@@ -706,14 +1025,15 @@ class CompressingChatAgent(
         val branch = getBranch(sessionId, branchId)
         val cachedProfile = userProfileRepository?.getCachedActiveProfile()
         synchronized(branch) { branch.userProfile = cachedProfile }
-        val profilePrompt =
-            synchronized(branch) { branch.userProfile }
-                ?.let { userProfilePromptBuilder.build(it) }
-                .orEmpty()
+        val activeProfile = synchronized(branch) { branch.userProfile }
+        val forbidUserName = activeProfile?.invariants?.forbidsAddressingUserByName() == true
+        val profilePrompt = activeProfile?.let { userProfilePromptBuilder.build(it) }.orEmpty()
         val systemPromptWithProfile =
             if (profilePrompt.isBlank()) systemPrompt else systemPrompt + "\n\n" + profilePrompt
         val historySnapshot = synchronized(branch) { branch.messages.toList() }
-        val factsSnapshot = synchronized(branch) { snapshotWorkingMemory(branch) }
+        val factsSnapshotRaw = synchronized(branch) { snapshotWorkingMemory(branch) }
+        val factsSnapshot =
+            if (forbidUserName) factsSnapshotRaw.withoutUserNameFact() else factsSnapshotRaw
         val composed =
             contextComposer.compose(
                 sessionId = contextKey(sessionId, branchId),
@@ -728,31 +1048,35 @@ class CompressingChatAgent(
     }
 
     fun getTaskState(sessionId: String): TaskState {
+        if (!config.enableTaskStateMachine) return TaskState.IDLE
         val branchId = getActiveBranchId(sessionId)
         val branch = getBranch(sessionId, branchId)
         return TaskStateMachine(
             sessionId = sessionId,
             branchId = branchId,
             branchState = branch,
-            storage = taskContextStorage
+            storage = taskContextStorage,
+            logger = fsmLogger
         )
             .getState()
     }
 
-    fun getTaskContextSnapshot(sessionId: String): TaskContext? {
+    override fun getTaskContextSnapshot(sessionId: String): TaskContext? {
         val branchId = getActiveBranchId(sessionId)
         val branch = getBranch(sessionId, branchId)
         return synchronized(branch) { branch.taskContext }
     }
 
     fun getCurrentStep(sessionId: String): TaskStep? {
+        if (!config.enableTaskStateMachine) return null
         val branchId = getActiveBranchId(sessionId)
         val branch = getBranch(sessionId, branchId)
         return TaskStateMachine(
             sessionId = sessionId,
             branchId = branchId,
             branchState = branch,
-            storage = taskContextStorage
+            storage = taskContextStorage,
+            logger = fsmLogger
         )
             .getCurrentStep()
     }
@@ -762,6 +1086,7 @@ class CompressingChatAgent(
         userMessage: String? = null,
         assistantMessage: String? = null
     ): TaskContext {
+        if (!config.enableTaskStateMachine) return idleTaskContext()
         val branchId = getActiveBranchId(sessionId)
         val branch = getBranch(sessionId, branchId)
         loadTaskContextIfNeeded(sessionId, branchId, branch)
@@ -771,7 +1096,8 @@ class CompressingChatAgent(
                 sessionId = sessionId,
                 branchId = branchId,
                 branchState = branch,
-                storage = taskContextStorage
+                storage = taskContextStorage,
+                logger = fsmLogger
             )
 
         if (userMessage != null) {
@@ -781,19 +1107,26 @@ class CompressingChatAgent(
         return next ?: idleTaskContext()
     }
 
-    suspend fun resetTask(sessionId: String) {
+    override suspend fun resetTask(sessionId: String) {
         val branchId = getActiveBranchId(sessionId)
         val branch = getBranch(sessionId, branchId)
+        if (!config.enableTaskStateMachine) {
+            synchronized(branch) { branch.taskContext = null }
+            runCatching { taskContextStorage.delete(sessionId, branchId) }
+            return
+        }
         TaskStateMachine(
             sessionId = sessionId,
             branchId = branchId,
             branchState = branch,
-            storage = taskContextStorage
+            storage = taskContextStorage,
+            logger = fsmLogger
         )
             .reset()
     }
 
-    suspend fun approveTaskPlan(sessionId: String): TaskContext? {
+    override suspend fun approveTaskPlan(sessionId: String): TaskContext? {
+        if (!config.enableTaskStateMachine) return null
         val branchId = getActiveBranchId(sessionId)
         val branch = getBranch(sessionId, branchId)
         loadTaskContextIfNeeded(sessionId, branchId, branch)
@@ -802,14 +1135,16 @@ class CompressingChatAgent(
                 sessionId = sessionId,
                 branchId = branchId,
                 branchState = branch,
-                storage = taskContextStorage
+                storage = taskContextStorage,
+                logger = fsmLogger
             )
         fsm.advance()
         fsm.setArtifact("planApproved", "true")
         return fsm.advance()
     }
 
-    suspend fun approveTaskValidation(sessionId: String): TaskContext? {
+    override suspend fun approveTaskValidation(sessionId: String): TaskContext? {
+        if (!config.enableTaskStateMachine) return null
         val branchId = getActiveBranchId(sessionId)
         val branch = getBranch(sessionId, branchId)
         loadTaskContextIfNeeded(sessionId, branchId, branch)
@@ -818,7 +1153,8 @@ class CompressingChatAgent(
                 sessionId = sessionId,
                 branchId = branchId,
                 branchState = branch,
-                storage = taskContextStorage
+                storage = taskContextStorage,
+                logger = fsmLogger
             )
         fsm.advance()
         fsm.setArtifact("validationApproved", "true")
@@ -895,7 +1231,12 @@ class CompressingChatAgent(
     }
 
     private suspend fun persistImportantFactsFromWorkingMemory(branch: BranchState, limit: Int) {
-        val snapshot = synchronized(branch) { snapshotWorkingMemory(branch) }
+        val forbidUserName =
+            synchronized(branch) { branch.userProfile }
+                ?.invariants
+                ?.forbidsAddressingUserByName() == true
+        val snapshotRaw = synchronized(branch) { snapshotWorkingMemory(branch) }
+        val snapshot = if (forbidUserName) snapshotRaw.withoutUserNameFact() else snapshotRaw
         val candidates =
             snapshot.entries
                 .flatMap { (category, group) ->

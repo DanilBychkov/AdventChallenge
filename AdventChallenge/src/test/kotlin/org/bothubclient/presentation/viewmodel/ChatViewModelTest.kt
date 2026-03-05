@@ -10,8 +10,8 @@ import org.bothubclient.domain.entity.ChatResult
 import org.bothubclient.domain.entity.Message
 import org.bothubclient.domain.entity.RequestMetrics
 import org.bothubclient.domain.entity.SessionTokenStatistics
+import org.bothubclient.domain.repository.UserProfileRepository
 import org.bothubclient.infrastructure.context.HeuristicFactsExtractor
-import org.bothubclient.infrastructure.repository.UserProfileRepository
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import kotlin.test.*

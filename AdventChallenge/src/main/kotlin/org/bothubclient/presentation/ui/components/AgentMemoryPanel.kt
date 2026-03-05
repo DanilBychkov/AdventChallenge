@@ -24,10 +24,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import org.bothubclient.domain.entity.FactEntry
-import org.bothubclient.domain.entity.Message
-import org.bothubclient.domain.entity.MessageRole
-import org.bothubclient.domain.entity.WmCategory
+import org.bothubclient.domain.entity.*
 import org.bothubclient.domain.memory.MemoryItem
 
 @Composable
@@ -35,6 +32,7 @@ fun AgentMemoryPanel(
     stmMessages: List<Message>,
     workingMemory: Map<WmCategory, Map<String, FactEntry>>,
     longTermMemory: List<MemoryItem>,
+    metrics: AgentMetricsSnapshot? = null,
     onRefreshLongTermMemory: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true
@@ -80,6 +78,17 @@ fun AgentMemoryPanel(
                             .verticalScroll(scrollState),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
+                    if (metrics != null) {
+                        val rate = "%.0f".format(metrics.compressionRate * 100f)
+                        Text(
+                            text =
+                                "Sessions: ${metrics.sessionsCount} | WM: ${metrics.wmFacts}/${metrics.wmGroups} | " +
+                                        "Compression: $rate% (${metrics.compressionSuccesses}/${metrics.compressionAttempts}, fail=${metrics.compressionFailures}) | " +
+                                        "Recall: ${metrics.recallHits}/${metrics.recallCandidates} (dup=${metrics.recallDuplicatesFiltered})",
+                            fontSize = 10.sp,
+                            color = Color(0xFFB0B0B0)
+                        )
+                    }
                     MemorySectionHeader(
                         title = "STM (краткосрочная)",
                         value = stmMessages.size.toString(),
@@ -237,4 +246,3 @@ private fun LongTermMemoryList(items: List<MemoryItem>) {
         Spacer(modifier = Modifier.height(2.dp))
     }
 }
-

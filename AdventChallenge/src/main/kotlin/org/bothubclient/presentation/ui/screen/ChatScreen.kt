@@ -21,7 +21,7 @@ import kotlinx.coroutines.CoroutineScope
 import org.bothubclient.domain.entity.ContextStrategy
 import org.bothubclient.domain.entity.Message
 import org.bothubclient.domain.entity.UserProfileDefaults
-import org.bothubclient.infrastructure.config.PanelSizePreferences
+import org.bothubclient.presentation.config.PanelSizePreferences
 import org.bothubclient.presentation.ui.components.*
 import org.bothubclient.presentation.ui.theme.BothubTheme
 import org.bothubclient.presentation.viewmodel.ChatViewModel
@@ -562,6 +562,7 @@ private fun ChatSidePanelState(
                 stmMessages = viewModel.shortTermMessages,
                 workingMemory = viewModel.workingMemory,
                 longTermMemory = viewModel.longTermMemory,
+                metrics = viewModel.agentMetrics,
                 onRefreshLongTermMemory = {
                     viewModel.loadLongTermMemory(coroutineScope)
                 },
@@ -594,6 +595,7 @@ private fun ChatSidePanelState(
                         viewModel.onCompressionBlockSizeChanged(it)
                     },
                     onAutoCompressionToggled = { viewModel.onAutoCompressionToggled(it) },
+                    onTaskStateMachineToggled = { viewModel.onTaskStateMachineToggled(it) },
                     enabled = !viewModel.isLoading
                 )
 

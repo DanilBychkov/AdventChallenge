@@ -4,20 +4,22 @@ import org.bothubclient.domain.entity.*
 
 class UserProfilePromptBuilder {
     fun build(userProfile: UserProfile): String {
+        val forbidUserName = userProfile.invariants.forbidsAddressingUserByName()
         return buildString {
             appendLine("## USER PROFILE")
-            appendIdentity(userProfile.identity)
+            appendInvariants(userProfile.invariants)
+            appendIdentity(userProfile.identity, forbidUserName)
             appendPreferences(userProfile.preferences)
             appendRules(userProfile.behaviorRules)
             appendContext(userProfile.context)
         }.trim()
     }
 
-    private fun StringBuilder.appendIdentity(identity: UserProfileIdentity) {
+    private fun StringBuilder.appendIdentity(identity: UserProfileIdentity, forbidUserName: Boolean) {
         if (identity.displayName.isBlank() && identity.role.isBlank() && identity.expertiseAreas.isEmpty()) {
             return
         }
-        if (identity.displayName.isNotBlank()) {
+        if (!forbidUserName && identity.displayName.isNotBlank()) {
             appendLine("- Обращайся к пользователю: ${identity.displayName}")
         }
         if (identity.role.isNotBlank()) {
@@ -85,6 +87,45 @@ class UserProfilePromptBuilder {
             }
         }
     }
+
+    private fun StringBuilder.appendInvariants(invariants: List<ProfileInvariant>) {
+        val active = invariants.filter { it.isActive }
+        if (active.isEmpty()) return
+
+        appendLine()
+        appendLine("## ИНВАРИАНТЫ (НЕНАРУШИМЫЕ ПРАВИЛА)")
+        appendLine("Ты ОБЯЗАН соблюдать эти правила. Нарушение запрещено.")
+        appendLine("Перед тем как написать любое предложение, проверь его на конфликт с инвариантами.")
+        appendLine("Если предложение нарушает HARD-инвариант — откажись и предложи альтернативу в рамках инвариантов.")
+        appendLine("Если нарушает SOFT-инвариант — предупреди и предложи вариант в рамках инвариантов.")
+        appendLine("Если ADVISORY — упомяни рекомендацию, но продолжай в рамках остальных правил.")
+        appendLine()
+        appendLine("Формат при конфликте:")
+        appendLine("⚠️ КОНФЛИКТ С ИНВАРИАНТОМ")
+        appendLine("Запрос: [что просил пользователь]")
+        appendLine("Инвариант: [какой инвариант нарушается]")
+        appendLine("Решение: [альтернатива в рамках инвариантов]")
+        appendLine()
+
+        active
+            .groupBy { it.category }
+            .toSortedMap(compareBy { it.ordinal })
+            .forEach { (cat, items) ->
+                appendLine("### ${cat.asRu()}")
+                items.forEach { inv ->
+                    val mark =
+                        when (inv.severity) {
+                            InvariantSeverity.HARD -> "⛔"
+                            InvariantSeverity.SOFT -> "⚠️"
+                            InvariantSeverity.ADVISORY -> "ℹ️"
+                        }
+                    appendLine("$mark ${inv.description}")
+                    if (inv.rationale.isNotBlank()) {
+                        appendLine("   Обоснование: ${inv.rationale}")
+                    }
+                }
+            }
+    }
 }
 
 private fun TechnicalLevel.asRu(): String =
@@ -123,4 +164,15 @@ private fun CodeBlockStyle.asRu(): String =
         CodeBlockStyle.WITH_COMMENTS -> "с комментариями"
         CodeBlockStyle.WITH_EXPLANATION -> "с объяснением"
         CodeBlockStyle.FULL_DOCUMENTATION -> "полная документация"
+    }
+
+private fun InvariantCategory.asRu(): String =
+    when (this) {
+        InvariantCategory.COMMON -> "Общие (всегда)"
+        InvariantCategory.ARCHITECTURE -> "Архитектура"
+        InvariantCategory.TECH_STACK -> "Техстек"
+        InvariantCategory.BUSINESS_RULES -> "Бизнес-правила"
+        InvariantCategory.SECURITY -> "Безопасность"
+        InvariantCategory.CODE_STYLE -> "Стиль кода"
+        InvariantCategory.CONSTRAINTS -> "Ограничения"
     }

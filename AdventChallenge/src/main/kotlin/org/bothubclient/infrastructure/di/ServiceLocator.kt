@@ -11,6 +11,7 @@ import org.bothubclient.domain.context.SummaryStorage
 import org.bothubclient.domain.repository.ApiKeyProvider
 import org.bothubclient.domain.repository.ChatHistoryStorage
 import org.bothubclient.domain.repository.ChatRepository
+import org.bothubclient.domain.repository.UserProfileRepository
 import org.bothubclient.infrastructure.agent.AgentBackedChatRepository
 import org.bothubclient.infrastructure.agent.BothubChatAgent
 import org.bothubclient.infrastructure.agent.CompressingChatAgent
@@ -22,7 +23,7 @@ import org.bothubclient.infrastructure.memory.LtmRecaller
 import org.bothubclient.infrastructure.persistence.FileChatHistoryStorage
 import org.bothubclient.infrastructure.persistence.FileTaskContextStorage
 import org.bothubclient.infrastructure.persistence.UserProfileStorage
-import org.bothubclient.infrastructure.repository.UserProfileRepository
+import org.bothubclient.infrastructure.repository.UserProfileRepository as InfraUserProfileRepository
 
 object ServiceLocator {
     private val httpClient: HttpClient by lazy {
@@ -46,9 +47,11 @@ object ServiceLocator {
 
     private val taskContextStorage: FileTaskContextStorage by lazy { FileTaskContextStorage() }
 
-    val userProfileRepository: UserProfileRepository by lazy {
-        UserProfileRepository(storage = userProfileStorage)
+    private val infraUserProfileRepository: InfraUserProfileRepository by lazy {
+        InfraUserProfileRepository(storage = userProfileStorage)
     }
+
+    val userProfileRepository: UserProfileRepository by lazy { infraUserProfileRepository }
 
     private val statelessChatRepository: ChatRepository by lazy {
         BothubChatRepository(httpClient) { apiKeyProvider.getApiKey() }
@@ -88,8 +91,9 @@ object ServiceLocator {
             contextComposer = contextComposer,
             factsExtractor = factsExtractor,
             ltmRecaller = ltmRecaller,
-            userProfileRepository = userProfileRepository,
-            taskContextStorage = taskContextStorage
+            userProfileRepository = infraUserProfileRepository,
+            taskContextStorage = taskContextStorage,
+            chatHistoryStorage = chatHistoryStorage
         )
     }
 

@@ -4,6 +4,34 @@ import kotlinx.serialization.Serializable
 import java.util.*
 
 @Serializable
+data class ProfileInvariant(
+    val id: String = UUID.randomUUID().toString(),
+    val category: InvariantCategory,
+    val description: String,
+    val rationale: String = "",
+    val severity: InvariantSeverity = InvariantSeverity.HARD,
+    val isActive: Boolean = true
+)
+
+@Serializable
+enum class InvariantCategory {
+    COMMON,
+    ARCHITECTURE,
+    TECH_STACK,
+    BUSINESS_RULES,
+    SECURITY,
+    CODE_STYLE,
+    CONSTRAINTS
+}
+
+@Serializable
+enum class InvariantSeverity {
+    HARD,
+    SOFT,
+    ADVISORY
+}
+
+@Serializable
 data class UserProfile(
     val id: String = UUID.randomUUID().toString(),
     val name: String = "User",
@@ -12,6 +40,7 @@ data class UserProfile(
     val preferences: UserPreferences = UserPreferences(),
     val behaviorRules: List<BehaviorRule> = emptyList(),
     val context: UserContext = UserContext(),
+    val invariants: List<ProfileInvariant> = emptyList(),
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 ) {
@@ -119,6 +148,36 @@ enum class CodeBlockStyle {
 }
 
 object UserProfileDefaults {
+    val SOLO_CODER_INVARIANTS =
+        listOf(
+            ProfileInvariant(
+                category = InvariantCategory.ARCHITECTURE,
+                description = "Clean Architecture: domain не зависит от infrastructure/presentation",
+                rationale = "Обратные зависимости нарушают тестируемость",
+                severity = InvariantSeverity.HARD
+            ),
+            ProfileInvariant(
+                category = InvariantCategory.TECH_STACK,
+                description = "UI только на JetBrains Compose Desktop (не JavaFX, не Swing)",
+                severity = InvariantSeverity.HARD
+            ),
+            ProfileInvariant(
+                category = InvariantCategory.TECH_STACK,
+                description = "Сеть только через Ktor Client",
+                severity = InvariantSeverity.HARD
+            ),
+            ProfileInvariant(
+                category = InvariantCategory.SECURITY,
+                description = "API ключи только через переменные окружения, никогда в коде",
+                severity = InvariantSeverity.HARD
+            ),
+            ProfileInvariant(
+                category = InvariantCategory.CONSTRAINTS,
+                description = "Kotlin/JVM target — без мультиплатформы",
+                severity = InvariantSeverity.SOFT
+            )
+        )
+
     val DEFAULT_PROFILE = UserProfile(
         id = "default",
         name = "Default",
@@ -167,7 +226,8 @@ object UserProfileDefaults {
                             "ui" to listOf("JetBrains Compose Desktop"),
                             "network" to listOf("Ktor Client")
                         )
-                )
+                ),
+            invariants = SOLO_CODER_INVARIANTS
         )
 
     val DEVELOPER_PROFILE =
