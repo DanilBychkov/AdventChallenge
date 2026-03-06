@@ -453,7 +453,6 @@ class CompressingChatAgent(
                             CompressionEvent.Complete(compressionResult.newBlock)
                         )
                     }
-
                     is CompressionResult.Partial -> {
                         log("PARTIAL Compression: ${compressionResult.warning}")
                         persistImportantFactsFromWorkingMemory(branch, limit = 24)
@@ -461,12 +460,10 @@ class CompressingChatAgent(
                             CompressionEvent.Complete(compressionResult.newBlock)
                         )
                     }
-
                     is CompressionResult.Failed -> {
                         log("FAILED Compression: ${compressionResult.error.message}")
                         _compressionEvents.emit(CompressionEvent.Error(compressionResult.error))
                     }
-
                     CompressionResult.NotNeeded -> {
                         log("Compression NOT NEEDED")
                     }
