@@ -83,6 +83,25 @@ class CompressingChatAgent(
 
     companion object {
         private const val TAG = "CompressingChatAgent"
+
+        /** Behavioral rules so the agent uses MCP tools/context when appropriate. */
+        private const val MCP_BEHAVIOR_RULES = """
+You have access to MCP servers that expose tools and context. The host has already discovered the available tools; when the section "--- MCP context ---" is present below, it contains pre-fetched results from those tools for this turn. The host has already performed the correct protocol (e.g. resolve-library-id then docs) — you do not need to "plan" or "request" it; your job is to use that content and answer the user.
+
+Behavior rules:
+1. Before answering questions about external systems, project docs, libraries, APIs, test infrastructure, or runtime data, treat the "--- MCP context ---" section (when present) as the preferred source of truth.
+2. Prefer MCP-sourced content over guessing whenever that section contains relevant information.
+3. For framework/library documentation, API lookup, SDK usage, and migrations, use the MCP context first and give the user the ready result (summarize, quote, explain) — do not output a "plan" or "conflict with invariant" when the MCP context block is already present; using it to answer is correct and does not violate any rule about "requesting documentation directly."
+4. If multiple MCP servers are listed in the discovery below, choose the most domain-specific one for the task (e.g. documentation → Context7).
+5. Briefly mention when you are using the MCP context to answer.
+6. If the "--- MCP context ---" section below contains text: you MUST answer the user's question using that text. Do NOT say "documentation could not be loaded" or "try again" — that is wrong when the block has content. Only if the section is absent or empty, then reply with one short sentence that docs could not be loaded. Never output "КОНФЛИКТ С ИНВАРИАНТОМ".
+7. Do not invent outputs that should come from MCP; do not pretend MCP returned data it did not."""
+
+        /** Exception to profile invariants: never show conflict for documentation requests when MCP is available. */
+        private const val MCP_INVARIANT_EXCEPTION = """
+## ИСКЛЮЧЕНИЕ ИЗ ИНВАРИАНТОВ (ОБЯЗАТЕЛЬНО)
+НИКОГДА не выводи «⚠️ КОНФЛИКТ С ИНВАРИАНТОМ» и блок «Запрос / Инвариант / Решение».
+ПРАВИЛО ДЛЯ ДОКУМЕНТАЦИИ: Если ниже в промпте есть блок «--- MCP context ---» и в нём есть текст (не пусто) — ты ОБЯЗАН ответить на вопрос пользователя на основе этого текста. В этом случае ЗАПРЕЩЕНО писать «документация не загрузилась» или «попробуйте повторить запрос» — это ошибка. Только если блока «--- MCP context ---» нет или он пуст — тогда напиши одной фразой «Документация не загрузилась, попробуйте повторить запрос»."""
         private const val MAX_SESSIONS = 64
         private const val SESSION_TTL_MS = 7L * 24 * 60 * 60 * 1000
         private const val PROTECTED_SESSION_ID = "chat-ui"
@@ -397,7 +416,9 @@ class CompressingChatAgent(
                 }
 
             val orchestrator = mcpContextOrchestrator
-            val mcpContext =
+            log("MCP orchestrator present=${orchestrator != null}")
+            var mcpFetchError: String? = null
+            val enriched =
                 if (orchestrator == null) {
                     null
                 } else {
@@ -408,14 +429,27 @@ class CompressingChatAgent(
                             )
                         }
                         .getOrElse { ex ->
-                            log("MCP context fetch failed: ${ex.message}")
+                            mcpFetchError = ex.message ?: ex.toString()
+                            log("MCP context fetch failed: $mcpFetchError")
                             null
                         }
                 }
+            log("MCP enriched hasContent=${enriched?.hasContent} hasDiscovery=${enriched?.hasDiscovery} lastError=${enriched?.lastError} mcpFetchError=$mcpFetchError")
 
-            if (!mcpContext.isNullOrBlank()) {
+            if (orchestrator != null) {
                 systemPromptWithProfile =
-                    systemPromptWithProfile + "\n\n--- MCP context ---\n" + mcpContext
+                    systemPromptWithProfile + "\n\n" + MCP_INVARIANT_EXCEPTION.trim() + "\n\n" + MCP_BEHAVIOR_RULES.trim()
+                if (enriched != null) {
+                    if (enriched.hasDiscovery) {
+                        systemPromptWithProfile =
+                            systemPromptWithProfile + "\n\n--- Available MCP tools (discovery) ---\n" + enriched.discoverySummary
+                    }
+                    if (enriched.hasContent) {
+                        systemPromptWithProfile =
+                            systemPromptWithProfile + "\n\n--- MCP context ---\n" + enriched.content +
+                                    "\n\n[ОБЯЗАТЕЛЬНО: Блок «--- MCP context ---» выше не пуст — документация загружена. Ответь на вопрос пользователя по этому тексту. Запрещено писать «документация не загрузилась» или «попробуйте повторить запрос».]"
+                    }
+                }
             }
 
             val previousUserNameFact =
@@ -618,6 +652,15 @@ class CompressingChatAgent(
 
             val enhancedSystemPrompt = composedContext.buildSystemPromptWithContext()
 
+            val hasMcpBlockInPrompt = enhancedSystemPrompt.contains("--- MCP context ---")
+            log("Enhanced systemPrompt length=${enhancedSystemPrompt.length} containsMcpContextBlock=$hasMcpBlockInPrompt")
+            if (hasMcpBlockInPrompt) {
+                val mcpStart = enhancedSystemPrompt.indexOf("--- MCP context ---")
+                val mcpSnippet =
+                    enhancedSystemPrompt.substring(mcpStart, (mcpStart + 200).coerceAtMost(enhancedSystemPrompt.length))
+                log("MCP block in prompt (first 200 chars): $mcpSnippet")
+            }
+
             if (composedContext.summaryBlocks.isNotEmpty()) {
                 log("Enhanced prompt length: ${enhancedSystemPrompt.length}")
                 log("=== FULL SYSTEM PROMPT WITH CONTEXT ===")
@@ -629,42 +672,80 @@ class CompressingChatAgent(
 
             section("SEND END")
 
+            val userMessageForApi =
+                if (enriched?.hasContent == true) {
+                    "[В системном промпте выше загружена документация по твоему запросу. Ответь на вопрос пользователя на её основе.]\n\n$userMessage"
+                } else {
+                    userMessage
+                }
+
             val result =
                 delegate.sendWithContext(
                     sessionId = sessionId,
                     contextMessages = composedContext.recentMessages,
-                    userMessage = userMessage,
+                    userMessage = userMessageForApi,
                     model = model,
                     systemPrompt = enhancedSystemPrompt,
                     temperature = temperature
                 )
 
+            val resultWithMcpError: ChatResult =
+                if (result is ChatResult.Success) {
+                    val err = enriched?.lastError ?: mcpFetchError
+                    if (err != null) {
+                        log("MCP attaching mcpError to Success: $err")
+                        result.copy(mcpError = err)
+                    } else result
+                } else {
+                    result
+                }
+
             val gatedResult: ChatResult =
-                if (result is ChatResult.Success && forbidUserName) {
+                if (resultWithMcpError is ChatResult.Success && forbidUserName) {
                     val (sanitized, changed) =
                         sanitizeAssistantTextNoUserName(
-                            text = result.message.content,
+                            text = resultWithMcpError.message.content,
                             forbiddenNames = forbiddenNamesForGate
                         )
                     if (changed) {
                         log("OutputGate: assistant message sanitized by invariant policy")
                         ChatResult.Success(
-                            message = result.message.copy(content = sanitized),
-                            metrics = result.metrics
+                            message = resultWithMcpError.message.copy(content = sanitized),
+                            metrics = resultWithMcpError.metrics,
+                            mcpError = resultWithMcpError.mcpError
                         )
                     } else {
-                        result
+                        resultWithMcpError
                     }
                 } else {
-                    result
+                    resultWithMcpError
                 }
 
-            if (gatedResult is ChatResult.Success) {
+            val finalResult: ChatResult =
+                if (gatedResult is ChatResult.Success && enriched?.hasContent == true) {
+                    val content = gatedResult.message.content.trim()
+                    val looksLikeDocNotLoaded =
+                        content.lowercase().contains("документация не загрузилась")
+                    if (looksLikeDocNotLoaded) {
+                        log("MCP fallback: model said 'docs not loaded' but we have content — substituting MCP content")
+                        ChatResult.Success(
+                            message = gatedResult.message.copy(content = enriched.content),
+                            metrics = gatedResult.metrics,
+                            mcpError = gatedResult.mcpError
+                        )
+                    } else {
+                        gatedResult
+                    }
+                } else {
+                    gatedResult
+                }
+
+            if (finalResult is ChatResult.Success) {
                 val stmOps = mutableListOf<MemoryOperation>()
                 val removed = mutableListOf<Message>()
                 synchronized(branch) {
                     branch.messages.add(Message.user(userMessage))
-                    branch.messages.add(gatedResult.message)
+                    branch.messages.add(finalResult.message)
                     stmOps +=
                         MemoryOperation(
                             op = "OBSERVE",
@@ -682,7 +763,7 @@ class CompressingChatAgent(
                             toLayer = MemoryLayer.STM,
                             category = null,
                             key = "assistant_message",
-                            value = gatedResult.message.content,
+                            value = finalResult.message.content,
                             confidence = 1.0f
                         )
                     if (currentConfig.strategy == ContextStrategy.SLIDING_WINDOW) {
@@ -707,7 +788,7 @@ class CompressingChatAgent(
                                 )
                     )
                 }
-                advanceTask(sessionId, assistantMessage = gatedResult.message.content)
+                advanceTask(sessionId, assistantMessage = finalResult.message.content)
             }
 
             val m = session.metrics
@@ -716,7 +797,7 @@ class CompressingChatAgent(
                         "compression=${m.compressionSuccesses.get()}/${m.compressionAttempts.get()} fail=${m.compressionFailures.get()} " +
                         "recall=${m.recallHits.get()}/${m.recallCandidates.get()} dup=${m.recallDuplicatesFiltered.get()}"
             )
-            return gatedResult
+            return finalResult
         } finally {
             persistHistoryIfDirty(sessionId, branchId, branch)
         }

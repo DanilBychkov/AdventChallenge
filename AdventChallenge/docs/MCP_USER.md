@@ -34,6 +34,26 @@ Click **Check connection** to run a health check for that server. The status and
 
 Your choices (enabled, force usage) are saved automatically and persist after restart. They are stored in your user data directory (e.g. `~/.bothubclient/mcp_servers.json`).
 
+## Как формулировать запрос на документацию
+
+Запросы можно писать **простыми фразами** — приложение само подставит нужный идентификатор библиотеки (Context7).
+Достаточно указать название библиотеки или темы.
+
+**Примеры корректных запросов:**
+
+- «Посмотри документацию Kotlin Coroutines»
+- «Документация по React»
+- «Найди информацию о Ktor»
+- «Документация по Spring Boot»
+
+Не обязательно писать «через Context7» или указывать формат вида `/owner/repo` — это делает приложение. Если
+документация не загрузилась (сеть, таймаут), попробуйте повторить запрос или указать точное имя пакета (например
+`kotlinx-coroutines`, `react`).
+
 ## Context7
 
-Context7 runs via `npx` and needs network access to fetch documentation. If it is offline or errors, the assistant will still answer without it; you can turn it off in MCP settings if you don’t want it used.
+Context7 runs via `npx` and needs network access to fetch documentation. The preset matches
+the [official installation](https://github.com/upstash/context7#installation). For higher rate limits, get a free API
+key at [context7.com/dashboard](https://context7.com/dashboard) and add env `CONTEXT7_API_KEY` or args
+`--api-key YOUR_KEY` in MCP server settings. If it is offline or errors, the assistant will still answer without it; you
+can turn it off in MCP settings if you don’t want it used.

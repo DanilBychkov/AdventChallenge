@@ -236,6 +236,15 @@ private fun ChatMainPane(
 
         Spacer(modifier = Modifier.height(8.dp))
 
+        if (viewModel.mcpErrorMessage != null) {
+            Text(
+                text = "MCP: ${viewModel.mcpErrorMessage}",
+                fontSize = 12.sp,
+                color = MaterialTheme.colors.error,
+                modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)
+            )
+        }
+
         StatusText(
             message = viewModel.statusMessage,
             isError = viewModel.statusMessage.contains("Ошибка")

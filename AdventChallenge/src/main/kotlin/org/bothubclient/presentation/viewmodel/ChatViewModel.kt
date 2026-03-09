@@ -53,6 +53,10 @@ class ChatViewModel(
     var apiKeyError by mutableStateOf<String?>(null)
         private set
 
+    /** MCP context fetch error (e.g. documentation failed to load) to show in chat UI. */
+    var mcpErrorMessage by mutableStateOf<String?>(null)
+        private set
+
     var selectedModel by mutableStateOf(getAvailableModelsUseCase.getDefault())
         private set
 
@@ -832,6 +836,7 @@ class ChatViewModel(
         isLoading = true
         statusMessage = "Отправка запроса..."
         apiKeyError = null
+        mcpErrorMessage = null
 
         scope.launch {
             val validationResult = validateApiKeyUseCase()
@@ -885,6 +890,7 @@ class ChatViewModel(
                     }
                     refreshContextMessages()
 
+                    mcpErrorMessage = result.mcpError
                     if (summaryBlocks.isNotEmpty()) {
                         statusMessage = "Готов к работе (${summaryBlocks.size} блоков сжатия)"
                     } else if (tokenStatistics.isApproachingLimit) {
@@ -895,6 +901,7 @@ class ChatViewModel(
                     }
                 }
                 is ChatResult.Error -> {
+                    mcpErrorMessage = null
                     messages = messages + Message.error("Ошибка: ${result.exception.message}")
                     statusMessage = "Ошибка запроса"
                     refreshBranchState()

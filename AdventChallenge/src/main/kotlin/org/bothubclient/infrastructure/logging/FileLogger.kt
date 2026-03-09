@@ -7,7 +7,7 @@ import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
 object FileLogger {
-    private val logFile = File("app.log")
+    private val logFile = File(System.getProperty("user.dir"), "app.log")
     private val writer = PrintWriter(FileWriter(logFile, false))
     private val formatter = DateTimeFormatter.ofPattern("HH:mm:ss.SSS")
 

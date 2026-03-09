@@ -314,6 +314,11 @@ class BothubChatAgent(
         if (apiMessages.any { it.role == "system" && it.content.contains("[FACTS]") }) {
             FileLogger.log(TAG, "*** FACTS MEMORY IS INCLUDED IN SYSTEM PROMPT ***")
         }
+        if (apiMessages.any { it.role == "system" && it.content.contains("--- MCP context ---") }) {
+            FileLogger.log(TAG, "*** MCP CONTEXT IS INCLUDED IN SYSTEM PROMPT ***")
+        } else if (apiMessages.any { it.role == "system" }) {
+            FileLogger.log(TAG, "*** MCP CONTEXT NOT FOUND IN SYSTEM PROMPT ***")
+        }
 
         var responseTimeMs = 0L
         val chatResponse: ApiChatResponse

@@ -10,6 +10,7 @@ class Context7RelevanceTest {
     @ParameterizedTest
     @ValueSource(
         strings = [
+            "Посмотри документацию по Kotlinx.coroutines",
             "Show official documentation for ktor client",
             "API lookup for OpenAI responses",
             "How to use this SDK with Kotlin?",

@@ -2,6 +2,8 @@ package org.bothubclient.application.mcp
 
 private val CONTEXT7_RELEVANCE_KEYWORDS = listOf(
     "documentation",
+    "документация",
+    "документацию",
     "docs",
     "api",
     "how to use",
@@ -11,6 +13,7 @@ private val CONTEXT7_RELEVANCE_KEYWORDS = listOf(
     "migrate",
     "upgrade",
     "library",
+    "coroutines",
     "framework",
     "sdk",
     "package",

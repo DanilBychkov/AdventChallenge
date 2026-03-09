@@ -4,13 +4,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.*
 import org.bothubclient.application.usecase.CheckMcpHealthUseCase
 import org.bothubclient.application.usecase.GetMcpServersUseCase
 import org.bothubclient.application.usecase.UpdateMcpServerUseCase
 import org.bothubclient.domain.entity.McpHealthStatus
 import org.bothubclient.domain.entity.McpServerConfig
+import kotlin.concurrent.thread
 
 /**
  * ViewModel for managing MCP server settings UI state.
@@ -83,25 +83,48 @@ class McpSettingsViewModel(
 
     /**
      * Triggers a health check for the specified server and refreshes the list.
+     * Runs the check in a separate thread so that a blocking/hanging MCP process
+     * cannot freeze the UI; after 35s we always clear "Checking".
      */
     fun checkHealth(scope: CoroutineScope, serverId: String) {
         if (checkingHealthIds[serverId] == true) return
 
         scope.launch {
             checkingHealthIds[serverId] = true
-            runCatching { checkMcpHealthUseCase(serverId) }
-                .onSuccess { status ->
-                    servers = servers.map { server ->
-                        if (server.id == serverId) server.withHealthStatus(status) else server
+            errorMessage = null
+            try {
+                val deferred = CompletableDeferred<Result<McpHealthStatus>>()
+                thread(name = "mcp-health-$serverId", isDaemon = true) {
+                    try {
+                        val status = runBlocking { checkMcpHealthUseCase(serverId) }
+                        deferred.complete(Result.success(status))
+                    } catch (e: Throwable) {
+                        deferred.complete(Result.failure(e))
                     }
                 }
-                .onFailure { e ->
-                    errorMessage = "Health check failed: ${e.message}"
+                val result = withTimeoutOrNull(35_000L) { deferred.await() }
+                if (result != null) {
+                    result
+                        .onSuccess { status ->
+                            servers = servers.map { server ->
+                                if (server.id == serverId) server.withHealthStatus(status) else server
+                            }
+                        }
+                        .onFailure { e ->
+                            errorMessage = "Health check failed: ${e.message}"
+                            servers = servers.map { server ->
+                                if (server.id == serverId) server.withHealthStatus(McpHealthStatus.ERROR) else server
+                            }
+                        }
+                } else {
+                    errorMessage = "Health check timed out (35s). Check Node.js/npx and network."
                     servers = servers.map { server ->
                         if (server.id == serverId) server.withHealthStatus(McpHealthStatus.ERROR) else server
                     }
                 }
-            checkingHealthIds[serverId] = false
+            } finally {
+                checkingHealthIds[serverId] = false
+            }
         }
     }
 

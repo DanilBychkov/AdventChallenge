@@ -167,6 +167,58 @@ class ChatViewModelTest {
         assertTrue(viewModel.messages[1].content.contains("Ошибка"))
         assertTrue(viewModel.statusMessage.contains("Ошибка"))
         assertFalse(viewModel.isLoading)
+        assertNull(viewModel.mcpErrorMessage)
+    }
+
+    @JunitTest
+    fun sendMessage_should_set_mcpErrorMessage_when_Success_has_mcpError() = runTest {
+        viewModel.onInputTextChanged("Docs please")
+        coEvery { sendMessageUseCase(any(), any(), any(), any()) } returns
+                ChatResult.Success(
+                    message = Message.assistant("Документация не загрузилась."),
+                    metrics = RequestMetrics(),
+                    mcpError = "resolve-library-id returned no ID"
+                )
+        coEvery { getSessionMessagesUseCase() } returns
+                listOf(Message.user("Docs please"), Message.assistant("Документация не загрузилась."))
+
+        viewModel.sendMessage(this)
+        advanceUntilIdle()
+
+        assertEquals("resolve-library-id returned no ID", viewModel.mcpErrorMessage)
+    }
+
+    @JunitTest
+    fun sendMessage_should_clear_mcpErrorMessage_on_new_send() = runTest {
+        viewModel.onInputTextChanged("First")
+        coEvery { sendMessageUseCase(any(), any(), any(), any()) } returns
+                ChatResult.Success(
+                    message = Message.assistant("Ok"),
+                    metrics = RequestMetrics(),
+                    mcpError = "timeout"
+                )
+        coEvery { getSessionMessagesUseCase() } returns listOf(Message.user("First"), Message.assistant("Ok"))
+        viewModel.sendMessage(this)
+        advanceUntilIdle()
+        assertEquals("timeout", viewModel.mcpErrorMessage)
+
+        viewModel.onInputTextChanged("Second")
+        coEvery { sendMessageUseCase(any(), any(), any(), any()) } returns
+                ChatResult.Success(
+                    message = Message.assistant("Done"),
+                    metrics = RequestMetrics(),
+                    mcpError = null
+                )
+        coEvery { getSessionMessagesUseCase() } returns
+                listOf(
+                    Message.user("First"),
+                    Message.assistant("Ok"),
+                    Message.user("Second"),
+                    Message.assistant("Done")
+                )
+        viewModel.sendMessage(this)
+        advanceUntilIdle()
+        assertNull(viewModel.mcpErrorMessage)
     }
 
     @JunitTest

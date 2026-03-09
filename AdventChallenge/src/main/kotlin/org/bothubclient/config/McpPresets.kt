@@ -5,17 +5,26 @@ import org.bothubclient.domain.entity.McpServerConfig
 import org.bothubclient.domain.entity.McpTransportType
 
 object McpPresets {
+    /**
+     * Context7 MCP preset — matches official installation and API:
+     * - Installation: https://github.com/upstash/context7#installation
+     * - API (libs/search + context): https://context7.com/docs/api-guide
+     * The MCP server uses GET /api/v2/libs/search (libraryName + query) and GET /api/v2/context (libraryId + query).
+     * For auth and higher rate limits: get API key at context7.com/dashboard, then in MCP settings add env:
+     * CONTEXT7_API_KEY = "ctx7sk_..." (Bearer token for Authorization header).
+     * Or args: ["-y", "@upstash/context7-mcp", "--api-key", "YOUR_KEY"].
+     */
     val CONTEXT7_PRESET = McpServerConfig(
         id = "context7",
         name = "Context7",
         type = "context7",
-        description = "Up-to-date documentation and code examples",
+        description = "Up-to-date documentation and code examples (context7.com API: libs/search + context)",
         enabled = false,
         forceUsage = false,
         transportType = McpTransportType.STDIO,
         command = "npx",
-        args = listOf("-y", "@upstash/context7-mcp@latest"),
-        env = mapOf("DEFAULT_MINIMUM_TOKENS" to "10000"),
+        args = listOf("-y", "@upstash/context7-mcp"),
+        env = null,
         url = null,
         headers = null,
         capabilities = null,

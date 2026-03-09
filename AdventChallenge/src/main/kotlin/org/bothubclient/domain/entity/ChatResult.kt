@@ -10,7 +10,9 @@ data class RequestMetrics(
 sealed class ChatResult {
     data class Success(
         val message: Message,
-        val metrics: RequestMetrics = RequestMetrics()
+        val metrics: RequestMetrics = RequestMetrics(),
+        /** MCP context fetch error to show in UI when documentation failed to load. */
+        val mcpError: String? = null
     ) : ChatResult()
     data class Error(val exception: Exception) : ChatResult()
 }
