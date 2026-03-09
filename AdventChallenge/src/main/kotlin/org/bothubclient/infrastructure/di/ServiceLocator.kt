@@ -21,8 +21,10 @@ import org.bothubclient.infrastructure.config.EnvironmentApiKeyProvider
 import org.bothubclient.infrastructure.context.*
 import org.bothubclient.infrastructure.memory.LtmRecaller
 import org.bothubclient.infrastructure.persistence.FileChatHistoryStorage
+import org.bothubclient.infrastructure.persistence.FileMcpSettingsStorage
 import org.bothubclient.infrastructure.persistence.FileTaskContextStorage
 import org.bothubclient.infrastructure.persistence.UserProfileStorage
+import org.bothubclient.infrastructure.repository.DefaultMcpRegistry
 import org.bothubclient.infrastructure.repository.UserProfileRepository as InfraUserProfileRepository
 
 object ServiceLocator {
@@ -131,6 +133,25 @@ object ServiceLocator {
 
     val getTokenStatisticsUseCase: GetTokenStatisticsUseCase by lazy {
         GetTokenStatisticsUseCase(chatAgent) { "chat-ui" }
+    }
+
+    // MCP-related dependencies
+    private val mcpSettingsStorage: FileMcpSettingsStorage by lazy { FileMcpSettingsStorage() }
+
+    private val mcpRegistry: DefaultMcpRegistry by lazy {
+        DefaultMcpRegistry(storage = mcpSettingsStorage)
+    }
+
+    val getMcpServersUseCase: GetMcpServersUseCase by lazy {
+        GetMcpServersUseCase(registry = mcpRegistry)
+    }
+
+    val updateMcpServerUseCase: UpdateMcpServerUseCase by lazy {
+        UpdateMcpServerUseCase(registry = mcpRegistry, storage = mcpSettingsStorage)
+    }
+
+    val checkMcpHealthUseCase: CheckMcpHealthUseCase by lazy {
+        CheckMcpHealthUseCase(registry = mcpRegistry, storage = mcpSettingsStorage)
     }
 
     fun close() {
