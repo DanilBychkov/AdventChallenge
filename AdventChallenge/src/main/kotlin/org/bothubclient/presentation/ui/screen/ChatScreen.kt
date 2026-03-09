@@ -547,6 +547,7 @@ private fun ChatSidePanelState(
 
         TaskStatePanel(
             taskContext = viewModel.taskContext,
+            stateMachineTemplate = viewModel.contextConfig.stateMachineTemplate,
             enabled = !viewModel.isLoading,
             onApprovePlan = { viewModel.approveTaskPlan(coroutineScope) },
             onApproveValidation = { viewModel.approveTaskValidation(coroutineScope) },
@@ -569,6 +570,13 @@ private fun ChatSidePanelState(
                 enabled = !viewModel.isLoading
             )
         }
+
+        LLMStateMachinePanel(
+            config = viewModel.contextConfig,
+            onTaskStateMachineToggled = { viewModel.onTaskStateMachineToggled(it) },
+            onStateMachineTemplateSelected = { viewModel.onStateMachineTemplateSelected(it) },
+            enabled = !viewModel.isLoading
+        )
 
                 ContextConfigPanel(
                     config = viewModel.contextConfig,
@@ -595,7 +603,6 @@ private fun ChatSidePanelState(
                         viewModel.onCompressionBlockSizeChanged(it)
                     },
                     onAutoCompressionToggled = { viewModel.onAutoCompressionToggled(it) },
-                    onTaskStateMachineToggled = { viewModel.onTaskStateMachineToggled(it) },
                     enabled = !viewModel.isLoading
                 )
 

@@ -360,12 +360,14 @@ class CompressingChatAgent(
         loadTaskContextIfNeeded(sessionId, branchId, branch)
         try {
             if (currentConfig.enableTaskStateMachine) {
+                log("TaskStateMachine: template=${currentConfig.stateMachineTemplate}")
                 val fsm =
                     TaskStateMachine(
                         sessionId = sessionId,
                         branchId = branchId,
                         branchState = branch,
                         storage = taskContextStorage,
+                        template = currentConfig.stateMachineTemplate,
                         logger = fsmLogger
                     )
                 fsm.maybeStartPlanning(userMessage)
@@ -1053,6 +1055,7 @@ class CompressingChatAgent(
             branchId = branchId,
             branchState = branch,
             storage = taskContextStorage,
+            template = config.stateMachineTemplate,
             logger = fsmLogger
         )
             .getState()
@@ -1073,6 +1076,7 @@ class CompressingChatAgent(
             branchId = branchId,
             branchState = branch,
             storage = taskContextStorage,
+            template = config.stateMachineTemplate,
             logger = fsmLogger
         )
             .getCurrentStep()
@@ -1094,6 +1098,7 @@ class CompressingChatAgent(
                 branchId = branchId,
                 branchState = branch,
                 storage = taskContextStorage,
+                template = config.stateMachineTemplate,
                 logger = fsmLogger
             )
 
@@ -1117,6 +1122,7 @@ class CompressingChatAgent(
             branchId = branchId,
             branchState = branch,
             storage = taskContextStorage,
+            template = config.stateMachineTemplate,
             logger = fsmLogger
         )
             .reset()
@@ -1133,6 +1139,7 @@ class CompressingChatAgent(
                 branchId = branchId,
                 branchState = branch,
                 storage = taskContextStorage,
+                template = config.stateMachineTemplate,
                 logger = fsmLogger
             )
         fsm.advance()
@@ -1151,6 +1158,7 @@ class CompressingChatAgent(
                 branchId = branchId,
                 branchState = branch,
                 storage = taskContextStorage,
+                template = config.stateMachineTemplate,
                 logger = fsmLogger
             )
         fsm.advance()

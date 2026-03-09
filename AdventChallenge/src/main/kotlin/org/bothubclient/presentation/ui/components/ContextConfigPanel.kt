@@ -44,7 +44,6 @@ fun ContextConfigPanel(
     onKeepLastNChanged: (Int) -> Unit,
     onCompressionBlockSizeChanged: (Int) -> Unit,
     onAutoCompressionToggled: (Boolean) -> Unit,
-    onTaskStateMachineToggled: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true
 ) {
@@ -151,31 +150,6 @@ fun ContextConfigPanel(
                         Checkbox(
                             checked = config.enableAutoCompression,
                             onCheckedChange = { if (enabled) onAutoCompressionToggled(it) },
-                            colors =
-                                CheckboxDefaults.colors(
-                                    checkedColor = MaterialTheme.colors.secondary,
-                                    uncheckedColor = Color.Gray
-                                ),
-                            enabled = enabled
-                        )
-                    }
-
-                    Row(
-                        modifier =
-                            Modifier.fillMaxWidth().clickable(enabled = enabled) {
-                                onTaskStateMachineToggled(!config.enableTaskStateMachine)
-                            },
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "LLM State Machine",
-                            fontSize = 12.sp,
-                            color = if (enabled) Color.White else Color.Gray
-                        )
-                        Checkbox(
-                            checked = config.enableTaskStateMachine,
-                            onCheckedChange = { if (enabled) onTaskStateMachineToggled(it) },
                             colors =
                                 CheckboxDefaults.colors(
                                     checkedColor = MaterialTheme.colors.secondary,

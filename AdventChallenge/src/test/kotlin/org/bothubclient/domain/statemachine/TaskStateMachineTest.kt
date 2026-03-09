@@ -2,6 +2,7 @@ package org.bothubclient.domain.statemachine
 
 import kotlinx.coroutines.test.runTest
 import org.bothubclient.domain.entity.BranchState
+import org.bothubclient.domain.entity.StateMachineTemplate
 import org.bothubclient.domain.entity.TaskState
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
@@ -40,7 +41,8 @@ class TaskStateMachineTest {
                 sessionId = "s",
                 branchId = "b",
                 branchState = branch,
-                storage = storage
+                storage = storage,
+                template = StateMachineTemplate.FULL_PIPELINE
             )
 
         fsm.maybeStartPlanning("Реализуй фичу.\nС шагами.\nПроверь результат.")
@@ -66,7 +68,8 @@ class TaskStateMachineTest {
                     sessionId = "s",
                     branchId = "b",
                     branchState = branch,
-                    storage = storage
+                    storage = storage,
+                    template = StateMachineTemplate.FULL_PIPELINE
                 )
 
             fsm.maybeStartPlanning("Сделай задачу: один шаг")
@@ -93,7 +96,8 @@ class TaskStateMachineTest {
                 sessionId = "s",
                 branchId = "b",
                 branchState = branch,
-                storage = storage
+                storage = storage,
+                template = StateMachineTemplate.FULL_PIPELINE
             )
 
         fsm.maybeStartPlanning("Сделай задачу: один шаг")

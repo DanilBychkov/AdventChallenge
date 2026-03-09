@@ -314,6 +314,11 @@ class ChatViewModel(
         updateContextConfig(contextConfig.withTaskStateMachine(enabled))
     }
 
+    fun onStateMachineTemplateSelected(template: StateMachineTemplate) {
+        log("onStateMachineTemplateSelected: $template")
+        updateContextConfig(contextConfig.withStateMachineTemplate(template))
+    }
+
     fun onStrategySelected(strategy: ContextStrategy) {
         log("onStrategySelected: $strategy")
         updateContextConfig(contextConfig.withStrategy(strategy))

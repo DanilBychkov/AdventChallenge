@@ -11,6 +11,7 @@ class TaskStateMachine(
     private val branchId: String,
     private val branchState: BranchState,
     private val storage: TaskContextStorage,
+    private val template: StateMachineTemplate = StateMachineTemplate.QUESTION_AND_REALIZATION,
     private val logger: Logger = NoOpLogger
 ) {
     private val tag = "TaskStateMachine"
@@ -152,16 +153,45 @@ class TaskStateMachine(
     suspend fun advance(userMessage: String? = null, assistantMessage: String? = null): TaskContext? {
         val ctx = synchronized(branchState) { branchState.taskContext } ?: return null
 
+        val skipValidationPhase =
+            template == StateMachineTemplate.QUESTION_AND_REALIZATION ||
+                    template == StateMachineTemplate.REALIZATION_ONLY
+
         return when (ctx.state) {
             TaskState.PLANNING -> advancePlanning(ctx)
             TaskState.EXECUTION -> advanceExecution(ctx, assistantMessage)
-            TaskState.VALIDATION -> advanceValidation(ctx)
+            TaskState.VALIDATION ->
+                if (skipValidationPhase) {
+                    completeValidationToDone(ctx)
+                } else {
+                    advanceValidation(ctx)
+                }
             TaskState.DONE, TaskState.IDLE -> ctx
         }
     }
 
+    /** Для шаблонов без этапа валидации: сразу переводим из VALIDATION в DONE (напр. после загрузки из хранилища). */
+    private suspend fun completeValidationToDone(ctx: TaskContext): TaskContext {
+        val now = System.currentTimeMillis()
+        val finalResult = ctx.plan.joinToString("\n\n") { it.result.orEmpty() }.trim()
+        val done =
+            ctx.copy(
+                state = TaskState.DONE,
+                artifacts = ctx.artifacts + ("finalResult" to finalResult),
+                updatedAt = now
+            )
+        synchronized(branchState) { branchState.taskContext = done }
+        storage.save(sessionId, branchId, done)
+        logger.log(
+            tag,
+            "Transition VALIDATION -> DONE (template=$template, skip validation): sessionId=$sessionId branchId=$branchId taskId=${ctx.taskId}"
+        )
+        return done
+    }
+
     private suspend fun advancePlanning(ctx: TaskContext): TaskContext {
-        val plan = if (ctx.plan.isNotEmpty()) ctx.plan else generatePlan(ctx.originalRequest)
+        val planAlreadyPresent = ctx.plan.isNotEmpty()
+        val plan = if (planAlreadyPresent) ctx.plan else generatePlan(ctx.originalRequest)
         val validated = validatePlan(plan)
         val now = System.currentTimeMillis()
 
@@ -174,8 +204,17 @@ class TaskStateMachine(
                 error = if (validated) null else "Plan validation failed"
             )
 
+        val shouldTransitionToExecution = when (template) {
+            StateMachineTemplate.PLANNING_ONLY -> false
+            StateMachineTemplate.QUESTION_AND_REALIZATION ->
+                validated && plan.isNotEmpty() && planAlreadyPresent
+
+            StateMachineTemplate.REALIZATION_ONLY -> validated && plan.isNotEmpty()
+            StateMachineTemplate.FULL_PIPELINE -> validated && plan.isNotEmpty() && approved
+        }
+
         val next =
-            if (validated && plan.isNotEmpty() && approved) {
+            if (shouldTransitionToExecution) {
                 updated.copy(state = TaskState.EXECUTION, currentStepIndex = 0, updatedAt = now)
             } else {
                 updated
@@ -187,7 +226,7 @@ class TaskStateMachine(
         if (next.state != ctx.state) {
             logger.log(
                 tag,
-                "Transition PLANNING -> EXECUTION: sessionId=$sessionId branchId=$branchId taskId=${ctx.taskId}"
+                "Transition PLANNING -> EXECUTION (template=$template): sessionId=$sessionId branchId=$branchId taskId=${ctx.taskId}"
             )
         }
         return next
@@ -195,13 +234,21 @@ class TaskStateMachine(
 
     private suspend fun advanceExecution(ctx: TaskContext, assistantMessage: String?): TaskContext {
         if (ctx.plan.isEmpty()) {
+            val skipValidation = template == StateMachineTemplate.QUESTION_AND_REALIZATION ||
+                    template == StateMachineTemplate.REALIZATION_ONLY
+            val failedState = if (skipValidation) TaskState.DONE else TaskState.VALIDATION
             val failed =
-                ctx.copy(state = TaskState.VALIDATION, error = "Empty plan", updatedAt = System.currentTimeMillis())
+                ctx.copy(
+                    state = failedState,
+                    error = "Empty plan",
+                    artifacts = ctx.artifacts + ("failureReport" to "Empty plan"),
+                    updatedAt = System.currentTimeMillis()
+                )
             synchronized(branchState) { branchState.taskContext = failed }
             storage.save(sessionId, branchId, failed)
             logger.log(
                 tag,
-                "Transition EXECUTION -> VALIDATION (empty plan): sessionId=$sessionId branchId=$branchId taskId=${ctx.taskId}"
+                "Transition EXECUTION -> $failedState (empty plan, template=$template): sessionId=$sessionId branchId=$branchId taskId=${ctx.taskId}"
             )
             return failed
         }
@@ -244,10 +291,20 @@ class TaskStateMachine(
                 updatedAt = now
             )
 
+        val skipValidation = template == StateMachineTemplate.QUESTION_AND_REALIZATION ||
+                template == StateMachineTemplate.REALIZATION_ONLY
+
         val next =
             if (updatedStep.status == StepStatus.COMPLETED) {
                 if (idx < updatedPlan.lastIndex) {
                     progressed.copy(currentStepIndex = idx + 1, updatedAt = now)
+                } else if (skipValidation) {
+                    val finalResult = updatedPlan.joinToString("\n\n") { it.result.orEmpty() }.trim()
+                    progressed.copy(
+                        state = TaskState.DONE,
+                        artifacts = progressed.artifacts + ("finalResult" to finalResult),
+                        updatedAt = now
+                    )
                 } else {
                     progressed.copy(state = TaskState.VALIDATION, updatedAt = now)
                 }
@@ -261,7 +318,7 @@ class TaskStateMachine(
         if (next.state != ctx.state) {
             logger.log(
                 tag,
-                "Transition EXECUTION -> VALIDATION: sessionId=$sessionId branchId=$branchId taskId=${ctx.taskId}"
+                "Transition EXECUTION -> ${next.state} (template=$template): sessionId=$sessionId branchId=$branchId taskId=${ctx.taskId}"
             )
         } else if (next.currentStepIndex != ctx.currentStepIndex || updatedStep.status != currentStep.status) {
             logger.log(

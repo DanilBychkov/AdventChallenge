@@ -11,6 +11,7 @@ data class ContextConfig(
     val includeAgentPrimer: Boolean = true,
     val enableFactsMemory: Boolean = true,
     val enableTaskStateMachine: Boolean = false,
+    val stateMachineTemplate: StateMachineTemplate = StateMachineTemplate.QUESTION_AND_REALIZATION,
     val maxFacts: Int = 24
 ) {
     companion object {
@@ -51,6 +52,9 @@ data class ContextConfig(
     fun withTaskStateMachine(enabled: Boolean): ContextConfig =
         copy(enableTaskStateMachine = enabled)
 
+    fun withStateMachineTemplate(template: StateMachineTemplate): ContextConfig =
+        copy(stateMachineTemplate = template)
+
     override fun toString(): String =
-        "ContextConfig(strategy=$strategy, keepLastN=$keepLastN, blockSize=$compressionBlockSize, maxBlocks=$maxSummaryBlocks, auto=$enableAutoCompression, facts=$enableFactsMemory, tsm=$enableTaskStateMachine)"
+        "ContextConfig(strategy=$strategy, keepLastN=$keepLastN, blockSize=$compressionBlockSize, maxBlocks=$maxSummaryBlocks, auto=$enableAutoCompression, facts=$enableFactsMemory, tsm=$enableTaskStateMachine, template=$stateMachineTemplate)"
 }

@@ -11,6 +11,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.bothubclient.domain.entity.StateMachineTemplate
 import org.bothubclient.domain.entity.StepStatus
 import org.bothubclient.domain.entity.TaskContext
 import org.bothubclient.domain.entity.TaskState
@@ -18,12 +19,14 @@ import org.bothubclient.domain.entity.TaskState
 @Composable
 fun TaskStatePanel(
     taskContext: TaskContext?,
+    stateMachineTemplate: StateMachineTemplate,
     enabled: Boolean,
     onApprovePlan: () -> Unit,
     onApproveValidation: () -> Unit,
     onReset: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val showApprovalSteps = stateMachineTemplate == StateMachineTemplate.FULL_PIPELINE
     var isExpanded by remember { mutableStateOf(false) }
     val state = taskContext?.state ?: TaskState.IDLE
 
@@ -127,18 +130,18 @@ fun TaskStatePanel(
                 taskContext.artifacts["validationApproved"]?.toBooleanStrictOrNull() ?: false
             val allStepsCompleted =
                 taskContext.plan.isNotEmpty() && taskContext.plan.all { it.status == StepStatus.COMPLETED }
-            val canApprovePlan = state == TaskState.PLANNING && planValidated && !planApproved
+            val canApprovePlan = showApprovalSteps && state == TaskState.PLANNING && planValidated && !planApproved
             val canApproveValidation =
-                state == TaskState.VALIDATION && allStepsCompleted && taskContext.error == null && !validationApproved
+                showApprovalSteps && state == TaskState.VALIDATION && allStepsCompleted && taskContext.error == null && !validationApproved
 
-            if (state == TaskState.PLANNING && planValidated && !planApproved) {
+            if (showApprovalSteps && state == TaskState.PLANNING && planValidated && !planApproved) {
                 Text(
                     text = "План готов. Нажмите «Утвердить план», чтобы начать выполнение.",
                     fontSize = 11.sp,
                     color = Color.Gray
                 )
             }
-            if (state == TaskState.VALIDATION && allStepsCompleted && taskContext.error == null && !validationApproved) {
+            if (showApprovalSteps && state == TaskState.VALIDATION && allStepsCompleted && taskContext.error == null && !validationApproved) {
                 Text(
                     text = "Проверки пройдены. Нажмите «Зафиксировать результат», чтобы завершить задачу.",
                     fontSize = 11.sp,
