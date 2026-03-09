@@ -1,30 +1,59 @@
 package org.bothubclient.application.usecase
 
+import org.bothubclient.application.mcp.McpClient
+import org.bothubclient.application.mcp.McpHealthResult
 import org.bothubclient.domain.entity.McpHealthStatus
+import org.bothubclient.domain.logging.Logger
+import org.bothubclient.domain.logging.NoOpLogger
 import org.bothubclient.domain.repository.McpRegistry
 import org.bothubclient.infrastructure.persistence.FileMcpSettingsStorage
 
 /**
  * Use case for checking MCP server health.
- * Currently a stub that sets health status to UNKNOWN.
  */
 class CheckMcpHealthUseCase(
     private val registry: McpRegistry,
-    private val storage: FileMcpSettingsStorage
+    private val storage: FileMcpSettingsStorage,
+    private val mcpClient: McpClient,
+    private val logger: Logger = NoOpLogger
 ) {
-    /**
-     * Performs a health check on the specified MCP server.
-     * Stub implementation: sets healthStatus to UNKNOWN and updates lastHealthCheckAt.
-     */
-    suspend operator fun invoke(serverId: String) {
-        val server = registry.getById(serverId) ?: return
-        
-        val updatedServer = server.withHealthStatus(McpHealthStatus.UNKNOWN)
-        
-        val current = registry.getAll()
-        val updated = current.map { existing ->
-            if (existing.id == serverId) updatedServer else existing
+    suspend operator fun invoke(serverId: String): McpHealthStatus {
+        val server = registry.getById(serverId)
+        if (server == null) {
+            logger.log("CheckMcpHealthUseCase", "MCP health server=$serverId success=false reason=Server not found")
+            return McpHealthStatus.ERROR
         }
-        storage.saveServers(updated)
+
+        val healthResult = runCatching {
+            mcpClient.checkHealth(server)
+        }.getOrElse { throwable ->
+            McpHealthResult.Error(
+                message = "Healthcheck failed with exception: ${throwable.message ?: "unknown"}",
+                throwable = throwable
+            )
+        }
+
+        val status = when (healthResult) {
+            is McpHealthResult.Online -> McpHealthStatus.ONLINE
+            is McpHealthResult.Offline -> McpHealthStatus.OFFLINE
+            is McpHealthResult.Error -> McpHealthStatus.ERROR
+        }
+
+        val updatedServer = server.withHealthStatus(status)
+        return runCatching {
+            val current = registry.getAll()
+            val updated = current.map { existing ->
+                if (existing.id == serverId) updatedServer else existing
+            }
+            storage.saveServers(updated)
+            logger.log("CheckMcpHealthUseCase", "MCP health server=$serverId success=true status=$status")
+            status
+        }.getOrElse { throwable ->
+            logger.log(
+                "CheckMcpHealthUseCase",
+                "MCP health server=$serverId success=false reason=Failed to persist health status: ${throwable.message}"
+            )
+            McpHealthStatus.ERROR
+        }
     }
 }

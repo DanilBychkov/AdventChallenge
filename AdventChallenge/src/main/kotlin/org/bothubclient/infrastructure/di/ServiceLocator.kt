@@ -20,6 +20,7 @@ import org.bothubclient.infrastructure.api.BothubChatRepository
 import org.bothubclient.infrastructure.config.EnvironmentApiKeyProvider
 import org.bothubclient.infrastructure.context.*
 import org.bothubclient.infrastructure.memory.LtmRecaller
+import org.bothubclient.infrastructure.mcp.StdioMcpClient
 import org.bothubclient.infrastructure.persistence.FileChatHistoryStorage
 import org.bothubclient.infrastructure.persistence.FileMcpSettingsStorage
 import org.bothubclient.infrastructure.persistence.FileTaskContextStorage
@@ -142,6 +143,10 @@ object ServiceLocator {
         DefaultMcpRegistry(storage = mcpSettingsStorage)
     }
 
+    private val mcpClient: StdioMcpClient by lazy {
+        StdioMcpClient()
+    }
+
     val getMcpServersUseCase: GetMcpServersUseCase by lazy {
         GetMcpServersUseCase(registry = mcpRegistry)
     }
@@ -151,7 +156,11 @@ object ServiceLocator {
     }
 
     val checkMcpHealthUseCase: CheckMcpHealthUseCase by lazy {
-        CheckMcpHealthUseCase(registry = mcpRegistry, storage = mcpSettingsStorage)
+        CheckMcpHealthUseCase(
+            registry = mcpRegistry,
+            storage = mcpSettingsStorage,
+            mcpClient = mcpClient
+        )
     }
 
     fun close() {
