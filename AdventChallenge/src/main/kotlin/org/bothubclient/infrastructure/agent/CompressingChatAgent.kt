@@ -3,6 +3,7 @@ package org.bothubclient.infrastructure.agent
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import org.bothubclient.application.mcp.McpContextOrchestrator
 import org.bothubclient.domain.agent.ChatAgent
 import org.bothubclient.domain.agent.ChatAgentIntrospection
 import org.bothubclient.domain.context.ContextComposer
@@ -47,6 +48,7 @@ class CompressingChatAgent(
     private val userProfilePromptBuilder: UserProfilePromptBuilder = UserProfilePromptBuilder(),
     private val taskContextStorage: TaskContextStorage = FileTaskContextStorage(),
     private val chatHistoryStorage: ChatHistoryStorage = FileChatHistoryStorage(),
+    private val mcpContextOrchestrator: McpContextOrchestrator? = null,
     initialConfig: ContextConfig = ContextConfig.DEFAULT
 ) : ChatAgent, ChatAgentIntrospection {
     private data class SessionMetrics(
@@ -387,12 +389,34 @@ class CompressingChatAgent(
             val activeProfile = synchronized(branch) { branch.userProfile }
             val forbidUserName = activeProfile?.invariants?.forbidsAddressingUserByName() == true
             val profilePrompt = activeProfile?.let { userProfilePromptBuilder.build(it) }.orEmpty()
-            val systemPromptWithProfile =
+            var systemPromptWithProfile =
                 if (profilePrompt.isBlank()) {
                     systemPrompt
                 } else {
                     systemPrompt + "\n\n" + profilePrompt
                 }
+
+            val orchestrator = mcpContextOrchestrator
+            val mcpContext =
+                if (orchestrator == null) {
+                    null
+                } else {
+                    runCatching {
+                            orchestrator.fetchEnrichedContext(
+                                userMessage = userMessage,
+                                sessionId = sessionId
+                            )
+                        }
+                        .getOrElse { ex ->
+                            log("MCP context fetch failed: ${ex.message}")
+                            null
+                        }
+                }
+
+            if (!mcpContext.isNullOrBlank()) {
+                systemPromptWithProfile =
+                    systemPromptWithProfile + "\n\n--- MCP context ---\n" + mcpContext
+            }
 
             val previousUserNameFact =
                 if (!forbidUserName) {

@@ -5,6 +5,8 @@ import io.ktor.client.engine.okhttp.*
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.serialization.kotlinx.json.*
 import kotlinx.serialization.json.Json
+import org.bothubclient.application.mcp.DefaultMcpRouter
+import org.bothubclient.application.mcp.McpContextOrchestrator
 import org.bothubclient.application.usecase.*
 import org.bothubclient.domain.agent.ChatAgent
 import org.bothubclient.domain.context.SummaryStorage
@@ -86,6 +88,24 @@ object ServiceLocator {
         DefaultContextComposer(summaryStorage = summaryStorage)
     }
 
+    private val mcpSettingsStorage: FileMcpSettingsStorage by lazy { FileMcpSettingsStorage() }
+
+    private val mcpRegistry: DefaultMcpRegistry by lazy {
+        DefaultMcpRegistry(storage = mcpSettingsStorage)
+    }
+
+    private val mcpClient: StdioMcpClient by lazy {
+        StdioMcpClient()
+    }
+
+    private val mcpRouter: DefaultMcpRouter by lazy {
+        DefaultMcpRouter(registry = mcpRegistry)
+    }
+
+    private val mcpContextOrchestrator: McpContextOrchestrator by lazy {
+        McpContextOrchestrator(mcpRouter = mcpRouter, mcpClient = mcpClient)
+    }
+
     val compressingChatAgent: CompressingChatAgent by lazy {
         CompressingChatAgent(
             delegate = baseChatAgent,
@@ -96,7 +116,8 @@ object ServiceLocator {
             ltmRecaller = ltmRecaller,
             userProfileRepository = infraUserProfileRepository,
             taskContextStorage = taskContextStorage,
-            chatHistoryStorage = chatHistoryStorage
+            chatHistoryStorage = chatHistoryStorage,
+            mcpContextOrchestrator = mcpContextOrchestrator
         )
     }
 
@@ -134,17 +155,6 @@ object ServiceLocator {
 
     val getTokenStatisticsUseCase: GetTokenStatisticsUseCase by lazy {
         GetTokenStatisticsUseCase(chatAgent) { "chat-ui" }
-    }
-
-    // MCP-related dependencies
-    private val mcpSettingsStorage: FileMcpSettingsStorage by lazy { FileMcpSettingsStorage() }
-
-    private val mcpRegistry: DefaultMcpRegistry by lazy {
-        DefaultMcpRegistry(storage = mcpSettingsStorage)
-    }
-
-    private val mcpClient: StdioMcpClient by lazy {
-        StdioMcpClient()
     }
 
     val getMcpServersUseCase: GetMcpServersUseCase by lazy {
