@@ -25,6 +25,7 @@ import org.bothubclient.presentation.config.PanelSizePreferences
 import org.bothubclient.presentation.ui.components.*
 import org.bothubclient.presentation.ui.theme.BothubTheme
 import org.bothubclient.presentation.viewmodel.ChatViewModel
+import org.bothubclient.presentation.viewmodel.McpSettingsViewModel
 
 @Composable
 fun ChatScreen(viewModel: ChatViewModel, coroutineScope: CoroutineScope) {
@@ -34,6 +35,8 @@ fun ChatScreen(viewModel: ChatViewModel, coroutineScope: CoroutineScope) {
     val scrollState = rememberScrollState()
     val promptScrollState = rememberScrollState()
     var isProfileEditorOpen by rememberSaveable { mutableStateOf(false) }
+    var isMcpSettingsOpen by rememberSaveable { mutableStateOf(false) }
+    val mcpSettingsViewModel = remember { McpSettingsViewModel.create() }
 
     var promptPanelHeight by remember {
         mutableStateOf(PanelSizePreferences.promptPanelHeight.dp)
@@ -76,6 +79,13 @@ fun ChatScreen(viewModel: ChatViewModel, coroutineScope: CoroutineScope) {
                     onClose = { isProfileEditorOpen = false }
                 )
             }
+            if (isMcpSettingsOpen) {
+                McpSettingsDialog(
+                    viewModel = mcpSettingsViewModel,
+                    coroutineScope = coroutineScope,
+                    onClose = { isMcpSettingsOpen = false }
+                )
+            }
             Header(
                 title = "Bothub Chat Client",
                 showReset = viewModel.messages.isNotEmpty(),
@@ -89,7 +99,8 @@ fun ChatScreen(viewModel: ChatViewModel, coroutineScope: CoroutineScope) {
                 onProfileSelected = { item ->
                     viewModel.onUserProfileSelected(coroutineScope, item.id)
                 },
-                onOpenProfile = { isProfileEditorOpen = true }
+                onOpenProfile = { isProfileEditorOpen = true },
+                onOpenMcpSettings = { isMcpSettingsOpen = true }
             )
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -847,7 +858,8 @@ private fun Header(
     profileDropdownExpanded: Boolean,
     onProfileDropdownExpandedChange: (Boolean) -> Unit,
     onProfileSelected: (org.bothubclient.presentation.viewmodel.ProfileDropdownItem) -> Unit,
-    onOpenProfile: () -> Unit
+    onOpenProfile: () -> Unit,
+    onOpenMcpSettings: () -> Unit
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
@@ -875,6 +887,13 @@ private fun Header(
                 Icon(
                     imageVector = Icons.Default.Person,
                     contentDescription = "Открыть профиль",
+                    tint = MaterialTheme.colors.secondary
+                )
+            }
+            IconButton(onClick = onOpenMcpSettings) {
+                Icon(
+                    imageVector = Icons.Default.Settings,
+                    contentDescription = "MCP Servers",
                     tint = MaterialTheme.colors.secondary
                 )
             }
