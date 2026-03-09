@@ -7,7 +7,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -385,7 +386,7 @@ private fun HealthStatusBadge(status: McpHealthStatus) {
         McpHealthStatus.UNKNOWN -> Triple(Color.Gray, Icons.Default.Info, "Unknown")
         McpHealthStatus.ONLINE -> Triple(Color(0xFF4CAF50), Icons.Default.Build, "Online")
         McpHealthStatus.OFFLINE -> Triple(Color(0xFFFF9800), Icons.Default.Close, "Offline")
-        McpHealthStatus.ERROR -> Triple(Color(0xFFFF6B6B), Icons.Default.Warning, "Error")
+        McpHealthStatus.ERROR -> Triple(Color(0xFFFF6B6B), Icons.Default.Close, "Error")
     }
 
     Surface(
