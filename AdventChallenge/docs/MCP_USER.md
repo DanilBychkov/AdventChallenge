@@ -2,7 +2,7 @@
 
 ## What are MCP servers?
 
-MCP (Model Context Protocol) servers provide extra context to the assistant, for example up-to-date documentation and code examples. **Context7** is the first built-in server and helps with library/framework docs, API lookup, and migration examples.
+MCP (Model Context Protocol) servers provide extra context to the assistant, for example up-to-date documentation and code examples. **Context7** helps with library/framework docs and API lookup. **Bored API** suggests random activities when you ask for ideas or things to do.
 
 ## Opening MCP settings
 
@@ -57,3 +57,7 @@ the [official installation](https://github.com/upstash/context7#installation). F
 key at [context7.com/dashboard](https://context7.com/dashboard) and add env `CONTEXT7_API_KEY` or args
 `--api-key YOUR_KEY` in MCP server settings. If it is offline or errors, the assistant will still answer without it; you
 can turn it off in MCP settings if you don’t want it used.
+
+## Bored API
+
+Bored API is a local MCP server (in the repo at `mcp-servers/bored-api-mcp`). It suggests random activities when you ask for ideas or things to do. Enable it in MCP settings; the app runs it with `node dist/index.js` from that folder. Build the server first: `cd mcp-servers/bored-api-mcp && npm install && npm run build`. Use **Check connection** in MCP settings to verify it is online.

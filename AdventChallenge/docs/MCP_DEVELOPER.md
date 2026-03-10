@@ -35,15 +35,15 @@ results.
 - **Application**: `McpRouter`, `McpSelectionResult`, `McpContextOrchestrator`, `McpEnrichedContext` (discovery +
   content), `McpDiscoveryResult` / `McpToolInfo` / `McpResourceInfo` / `McpPromptInfo`, `McpServerCapabilities`,
   `McpRelevanceStrategy`, `McpRelevanceResult`, `McpRelevanceStrategyRegistry`, `Context7RelevanceStrategy`,
-  `FallbackRelevanceStrategy`, `Context7Relevance`, `McpClient` / `McpFetchResult` / `McpHealthResult`; use cases:
+  `BoredApiRelevanceStrategy`, `FallbackRelevanceStrategy`, `Context7Relevance`, `McpClient` / `McpFetchResult` / `McpHealthResult`; use cases:
   `GetMcpServersUseCase`, `UpdateMcpServerUseCase`, `CheckMcpHealthUseCase`.
 - **Infrastructure**: `DefaultMcpRegistry`, `DefaultMcpRelevanceStrategyRegistry`, `FileMcpSettingsStorage`,
-  `DefaultMcpRouter`, `StdioMcpClient` (discover: tools/list + resources/list + prompts/list; fetchContext;
-  checkHealth), wiring in `ServiceLocator`.
+  `DefaultMcpRouter`, `StdioMcpClient`, `StdioMcpFetchStrategy` / `Context7StdioFetchStrategy` / `DefaultStdioMcpFetchStrategy` (discover; fetchContext via strategy; checkHealth), wiring in `ServiceLocator`.
 - **Persistence**: `~/.bothubclient/mcp_servers.json`. Presets (e.g. Context7) are merged with saved overrides by id.
 - **Context7**: Uses the API search method (resolve-library-id → GET /api/v2/libs/search with libraryName + query
   per [API Guide](https://context7.com/docs/api-guide)), then get-library-docs for context. No LLM normalization; the
-  search API returns the library ID.
+  search API returns the library ID. Context7-specific tool ordering and argument building live in `Context7StdioFetchStrategy`.
+- **Bored API**: Local MCP server in `mcp-servers/bored-api-mcp` (tools: get-random-activity, find-activity). Preset id `bored-api`, type `bored-api`; use `workingDirectory` so the process runs from that folder (e.g. `node dist/index.js`). Relevance: `BoredApiRelevanceStrategy` (keywords: activity, ideas, bored, suggestion, etc.).
 - **Agent integration**: `CompressingChatAgent` calls `orchestrator.fetchEnrichedContext(...)` which returns
   `McpEnrichedContext(discoverySummary, content)`. It injects into the system prompt: (1) MCP behavior rules, (2) "---
   Available MCP tools (discovery) ---" + discoverySummary (tools, resources, prompts per server), (3) "--- MCP
@@ -91,3 +91,4 @@ results.
 - `Context7RelevanceTest`: keyword-based relevance for Context7.
 - `McpContextOrchestratorTest`: orchestration with forced/optional and failure handling; optional behavior driven by
   router selection only; result is `McpEnrichedContext.content` / `.discoverySummary`.
+- Add `BoredApiRelevanceTest` for bored-api relevance; extend router test for bored-api optional selection when message matches activity/ideas.
