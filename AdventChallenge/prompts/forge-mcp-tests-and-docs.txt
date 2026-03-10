@@ -1,0 +1,27 @@
+GOAL
+Add unit tests for Bored API relevance and routing, tests for MCP config atomic update, and update MCP_DEVELOPER.md and MCP_USER.md to document Bored API.
+
+PROJECT CONTEXT
+- Context7RelevanceTest: parameterized tests for isContext7Relevant (docs/sdk vs unrelated). BoredApi has BoredApiRelevanceStrategy and internal isBoredApiRelevantMessage; we test via the strategy.
+- DefaultMcpRouterTest: has tests with context7 and optional servers; add one test that uses server type "bored-api" and a message with activity/bored keyword so optional includes bored-api.
+- McpRegistry.runAtomicUpdate: add a test that runs two concurrent runAtomicUpdate and verifies the final list contains both updates (no lost update).
+- docs/MCP_DEVELOPER.md: add Bored API to "Adding a new MCP server", mention BoredApiRelevanceStrategy, and how to run/verify bored-api.
+- docs/MCP_USER.md: add section "Bored API" similar to "Context7" (what it does, how to enable, workingDirectory if needed).
+
+ALLOWED CHANGES
+- AdventChallenge/src/test/kotlin/org/bothubclient/application/mcp/ (new BoredApiRelevanceTest.kt; optionally extend DefaultMcpRouterTest with bored-api case; new test for atomic update e.g. in DefaultMcpRegistryTest or a new test class for runAtomicUpdate)
+- AdventChallenge/docs/MCP_DEVELOPER.md
+- AdventChallenge/docs/MCP_USER.md
+
+RESTRICTIONS
+Do not change production code. Follow existing test style (JUnit 5, ParameterizedTest where appropriate).
+
+ACCEPTANCE CRITERIA
+1) BoredApiRelevanceTest: parameterized tests that BoredApiRelevanceStrategy.isRelevant returns true for messages containing activity/ideas/bored/suggestion etc., and false for unrelated messages. Use a dummy McpServerConfig(id="bored-api", type="bored-api", ...) and call strategy.isRelevant(server, message, null).relevant.
+2) DefaultMcpRouterTest: add a test that with server type bored-api and message "I'm bored, give me an activity idea" the optional servers list includes the bored-api server (relevance registry has BoredApiRelevanceStrategy for bored-api).
+3) Test for runAtomicUpdate: two coroutines each call runAtomicUpdate to update a different server by id; after both complete, getAll() must contain both updates. Use a real or in-memory storage if possible; if FileMcpSettingsStorage uses a file, use a temp directory or mock.
+4) MCP_DEVELOPER.md: add Bored API preset and BoredApiRelevanceStrategy to the components list; add short "Bored API" subsection (preset id bored-api, type bored-api, workingDirectory, how to run npm run dev / node dist/index.js from mcp-servers/bored-api-mcp).
+5) MCP_USER.md: add "Bored API" section (like Context7): what it does (random activity suggestions), how to enable in MCP settings, that it runs locally from mcp-servers/bored-api-mcp with node.
+
+VALIDATION
+.\gradlew test --tests "*Mcp*" --tests "*BoredApi*" (or equivalent) passes.

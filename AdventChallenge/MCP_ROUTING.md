@@ -23,14 +23,16 @@ The router uses `McpRelevanceStrategyRegistry` to determine which optional serve
 1. **Strategy lookup priority**: Server ID → Server Type → Fallback
 2. **Default strategies**:
     - `context7` type: `Context7RelevanceStrategy` (keyword-based heuristic)
+    - `bored-api` type: `BoredApiRelevanceStrategy` (activity/ideas/boredom keywords)
     - Unknown types: `FallbackRelevanceStrategy(defaultRelevant = false)`
 
 ### Relevance strategies
 
-| Strategy                    | Description                                                         |
-|-----------------------------|---------------------------------------------------------------------|
-| `Context7RelevanceStrategy` | Keyword-based matching for documentation/API/SDK queries            |
-| `FallbackRelevanceStrategy` | Default fallback; configurable `defaultRelevant` (default: `false`) |
+| Strategy                     | Description                                                         |
+|------------------------------|---------------------------------------------------------------------|
+| `Context7RelevanceStrategy`  | Keyword-based matching for documentation/API/SDK queries            |
+| `BoredApiRelevanceStrategy`  | Keyword-based matching for activity/ideas/boredom/suggestions         |
+| `FallbackRelevanceStrategy`  | Default fallback; configurable `defaultRelevant` (default: `false`) |
 
 ### How relevance is determined
 
@@ -85,6 +87,10 @@ The `Context7RelevanceStrategy` checks for these keywords (case-insensitive):
 - English: `documentation`, `docs`, `api`, `how to use`, `example`, `examples`, `migration`, `migrate`, `upgrade`,
   `library`, `framework`, `sdk`, `package`, `npm`, `pip`, `latest version`, `coroutines`
 - Russian: `документация`, `документацию`
+
+## Bored API relevance keywords
+
+The `BoredApiRelevanceStrategy` checks for (case-insensitive): `activity`, `activities`, `idea`, `ideas`, `bored`, `boredom`, `what to do`, `something to do`, `suggestion`, `suggestions`, `random activity`.
 
 ## Fallback behavior
 

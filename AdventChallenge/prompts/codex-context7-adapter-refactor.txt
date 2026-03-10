@@ -1,0 +1,30 @@
+GOAL
+Remove the hard-coded Context7 tool names and argument-building logic from StdioMcpClient by introducing a pluggable fetch strategy (adapter). The generic client should call a strategy for: (1) optional pre-resolution (e.g. resolve-library-id for Context7), (2) tool ordering, (3) argument candidates per tool. Context7-specific behavior lives in a dedicated strategy implementation; other servers (e.g. bored-api) use a generic strategy.
+
+PROJECT CONTEXT
+- StdioMcpClient (infrastructure/mcp/StdioMcpClient.kt) currently contains: resolveLibraryIdIfAvailable (Context7 resolve-library-id + Context7QueryHelper), prioritizeTools (get-library-docs, query-docs, resolve-library-id weights), buildArgumentCandidates (context7WithQuery, isGetLibraryDocs, isQueryDocs, Context7QueryHelper). These are used only in callToolsForQuery.
+- McpServerConfig has a "type" field (e.g. "context7", "bored-api").
+- Context7QueryHelper is in infrastructure/mcp/Context7QueryHelper.kt and stays as-is (used only by the Context7 strategy).
+
+ALLOWED CHANGES
+- New interface and classes in org.bothubclient.application.mcp or org.bothubclient.infrastructure.mcp: e.g. StdioMcpFetchStrategy (interface), DefaultStdioMcpFetchStrategy (generic behavior), Context7StdioFetchStrategy (current Context7 logic moved here).
+- StdioMcpClient: inject a strategy selector (McpServerConfig) -> StdioMcpFetchStrategy; replace inline resolveLibraryIdIfAvailable, prioritizeTools, buildArgumentCandidates with calls to the selected strategy. Remove hard-coded "resolve-library-id", "get-library-docs", "query-docs" from StdioMcpClient.
+- ServiceLocator: when building StdioMcpClient, pass a selector that returns Context7StdioFetchStrategy for server.type == "context7", else DefaultStdioMcpFetchStrategy.
+- Tests: update any tests that depend on StdioMcpClient internals; ensure DefaultMcpRouterTest and McpContextOrchestratorTest still pass.
+
+RESTRICTIONS
+Do not change Context7QueryHelper.kt. Do not change the MCP protocol (initialize, tools/list, tools/call). Do not remove or change McpFetchResult / McpClient contract. Keep callToolsForQuery behavior: try tools in order, try argument candidates until one returns non-error content.
+
+ACCEPTANCE CRITERIA
+1) Interface StdioMcpFetchStrategy (or equivalent name) with three abstractions:
+   - suspend resolvePreference(session, tools, query): String?  — optional pre-step (Context7 returns resolved library ID; generic returns null).
+   - fun prioritizeTools(tools: List<JsonObject>): List<JsonObject>
+   - fun buildArgumentCandidates(tool: JsonObject, query: String, resolvedPreference: String?): List<JsonObject>
+2) Context7StdioFetchStrategy: implements the interface; contains the current resolve-library-id logic (using Context7QueryHelper), current tool weights (get-library-docs, query-docs, resolve-library-id), and current Context7-specific argument shapes (libraryId, context7CompatibleLibraryID, topic, tokens).
+3) DefaultStdioMcpFetchStrategy: resolvePreference returns null; prioritizeTools returns tools as-is (or by name); buildArgumentCandidates returns [inferred from schema, generic { "query": query }].
+4) StdioMcpClient accepts a strategy selector (e.g. (McpServerConfig) -> StdioMcpFetchStrategy) and uses it in callToolsForQuery to get resolvePreference, prioritizeTools, buildArgumentCandidates. No references to "resolve-library-id", "get-library-docs", "query-docs" or Context7QueryHelper inside StdioMcpClient.
+5) ServiceLocator wires the selector: context7 -> Context7StdioFetchStrategy(), else DefaultStdioMcpFetchStrategy().
+6) ./gradlew compileKotlin and ./gradlew test (or the MCP-related tests) pass.
+
+VALIDATION
+From AdventChallenge directory: $env:GRADLE_USER_HOME = (Join-Path (Get-Location) ".gradle-codex"); .\gradlew compileKotlin; .\gradlew test --tests "*Mcp*"

@@ -136,6 +136,39 @@ class DefaultMcpRouterTest {
     }
 
     @Test
+    fun `selectForRequest includes bored-api server when message contains activity keyword`() = runTest {
+        val boredApiServer = McpServerConfig(
+            id = "bored-api",
+            name = "Bored API",
+            type = "bored-api",
+            enabled = true,
+            forceUsage = false
+        )
+        val context7Server = McpServerConfig(
+            id = "context7",
+            name = "Context7",
+            type = "context7",
+            enabled = true,
+            forceUsage = false
+        )
+
+        val registry = FakeMcpRegistry(
+            enabled = listOf(boredApiServer, context7Server),
+            forced = emptyList()
+        )
+        // Use registry with defaults: bored-api has BoredApiRelevanceStrategy registered
+        val relevanceRegistry = DefaultMcpRelevanceStrategyRegistry.withDefaults()
+        val router = DefaultMcpRouter(registry, relevanceRegistry)
+
+        // Message with bored/activity keywords - bored-api should pass
+        val result = router.selectForRequest("I'm bored, give me an activity idea")
+
+        assertEquals(listOf("bored-api"), result.optionalServers.map { it.id })
+        assertEquals("bored-api", result.metadata["optionalPassed"])
+        assertTrue(result.metadata["optionalFiltered"]?.contains("context7") == true)
+    }
+
+    @Test
     fun `selectForRequest with custom relevance registry uses server-specific strategies`() = runTest {
         val serverA = McpServerConfig(
             id = "server-a",
@@ -186,6 +219,9 @@ private class FakeMcpRegistry(
     override suspend fun getEnabled(): List<McpServerConfig> = enabled
 
     override suspend fun getForced(): List<McpServerConfig> = forced
+
+    override suspend fun <T> runAtomicUpdate(block: suspend (List<McpServerConfig>) -> Pair<List<McpServerConfig>, T>): T =
+        block(enabled).let { (_, result) -> result }
 }
 
 // Test helper strategies

@@ -22,6 +22,8 @@ import org.bothubclient.infrastructure.agent.StateMachineAwareAgent
 import org.bothubclient.infrastructure.api.BothubChatRepository
 import org.bothubclient.infrastructure.config.EnvironmentApiKeyProvider
 import org.bothubclient.infrastructure.context.*
+import org.bothubclient.infrastructure.mcp.Context7StdioFetchStrategy
+import org.bothubclient.infrastructure.mcp.DefaultStdioMcpFetchStrategy
 import org.bothubclient.infrastructure.mcp.StdioMcpClient
 import org.bothubclient.infrastructure.memory.LtmRecaller
 import org.bothubclient.infrastructure.persistence.FileChatHistoryStorage
@@ -96,7 +98,13 @@ object ServiceLocator {
     }
 
     private val mcpClient: StdioMcpClient by lazy {
-        StdioMcpClient()
+        val defaultStrategy = DefaultStdioMcpFetchStrategy()
+        val context7Strategy = Context7StdioFetchStrategy()
+        StdioMcpClient(
+            fetchStrategySelector = { server ->
+                if (server.type.equals("context7", ignoreCase = true)) context7Strategy else defaultStrategy
+            }
+        )
     }
 
     private val mcpRelevanceRegistry: DefaultMcpRelevanceStrategyRegistry by lazy {
@@ -167,13 +175,12 @@ object ServiceLocator {
     }
 
     val updateMcpServerUseCase: UpdateMcpServerUseCase by lazy {
-        UpdateMcpServerUseCase(registry = mcpRegistry, storage = mcpSettingsStorage)
+        UpdateMcpServerUseCase(registry = mcpRegistry)
     }
 
     val checkMcpHealthUseCase: CheckMcpHealthUseCase by lazy {
         CheckMcpHealthUseCase(
             registry = mcpRegistry,
-            storage = mcpSettingsStorage,
             mcpClient = mcpClient
         )
     }

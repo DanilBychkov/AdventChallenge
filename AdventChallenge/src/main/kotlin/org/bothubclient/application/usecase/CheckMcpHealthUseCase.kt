@@ -6,14 +6,12 @@ import org.bothubclient.domain.entity.McpHealthStatus
 import org.bothubclient.domain.logging.Logger
 import org.bothubclient.domain.logging.NoOpLogger
 import org.bothubclient.domain.repository.McpRegistry
-import org.bothubclient.infrastructure.persistence.FileMcpSettingsStorage
 
 /**
  * Use case for checking MCP server health.
  */
 class CheckMcpHealthUseCase(
     private val registry: McpRegistry,
-    private val storage: FileMcpSettingsStorage,
     private val mcpClient: McpClient,
     private val logger: Logger = NoOpLogger
 ) {
@@ -41,13 +39,14 @@ class CheckMcpHealthUseCase(
 
         val updatedServer = server.withHealthStatus(status)
         return runCatching {
-            val current = registry.getAll()
-            val updated = current.map { existing ->
-                if (existing.id == serverId) updatedServer else existing
+            registry.runAtomicUpdate { list ->
+                val updated = list.map { existing ->
+                    if (existing.id == serverId) updatedServer else existing
+                }
+                Pair(updated, status)
+            }.also {
+                logger.log("CheckMcpHealthUseCase", "MCP health server=$serverId success=true status=$status")
             }
-            storage.saveServers(updated)
-            logger.log("CheckMcpHealthUseCase", "MCP health server=$serverId success=true status=$status")
-            status
         }.getOrElse { throwable ->
             logger.log(
                 "CheckMcpHealthUseCase",
