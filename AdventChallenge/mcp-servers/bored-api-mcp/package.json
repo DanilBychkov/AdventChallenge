@@ -13,10 +13,9 @@
   ],
   "main": "dist/index.js",
   "scripts": {
-    "postinstall": "mcp-use generate-types || true",
-    "build": "mcp-use build",
-    "dev": "mcp-use dev",
-    "start": "mcp-use start",
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch index.ts",
+    "start": "node dist/index.js",
     "deploy": "mcp-use deploy"
   },
   "dependencies": {

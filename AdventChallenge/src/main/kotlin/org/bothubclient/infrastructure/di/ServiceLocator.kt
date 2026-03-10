@@ -22,6 +22,7 @@ import org.bothubclient.infrastructure.agent.StateMachineAwareAgent
 import org.bothubclient.infrastructure.api.BothubChatRepository
 import org.bothubclient.infrastructure.config.EnvironmentApiKeyProvider
 import org.bothubclient.infrastructure.context.*
+import org.bothubclient.infrastructure.logging.FileLogger
 import org.bothubclient.infrastructure.mcp.Context7StdioFetchStrategy
 import org.bothubclient.infrastructure.mcp.DefaultStdioMcpFetchStrategy
 import org.bothubclient.infrastructure.mcp.StdioMcpClient
@@ -97,10 +98,19 @@ object ServiceLocator {
         DefaultMcpRegistry(storage = mcpSettingsStorage)
     }
 
+    private val diagnosticsLogger by lazy {
+        object : org.bothubclient.domain.logging.Logger {
+            override fun log(tag: String, message: String) {
+                FileLogger.log(tag, message)
+            }
+        }
+    }
+
     private val mcpClient: StdioMcpClient by lazy {
         val defaultStrategy = DefaultStdioMcpFetchStrategy()
         val context7Strategy = Context7StdioFetchStrategy()
         StdioMcpClient(
+            logger = diagnosticsLogger,
             fetchStrategySelector = { server ->
                 if (server.type.equals("context7", ignoreCase = true)) context7Strategy else defaultStrategy
             }
@@ -181,7 +191,8 @@ object ServiceLocator {
     val checkMcpHealthUseCase: CheckMcpHealthUseCase by lazy {
         CheckMcpHealthUseCase(
             registry = mcpRegistry,
-            mcpClient = mcpClient
+            mcpClient = mcpClient,
+            logger = diagnosticsLogger
         )
     }
 
