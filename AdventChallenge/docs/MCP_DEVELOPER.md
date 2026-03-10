@@ -71,24 +71,68 @@ results.
 
 ### Bored API (example preset)
 
+#### Preset and Location
+
 - **Preset id**: `bored-api`
 - **Type**: `bored-api`
-- **Location**: `mcp-servers/bored-api-mcp/`
+- **Location**: `mcp-servers/bored-api-mcp/` (relative to repo root)
 - **Tools**: `get-random-activity`, `find-activity`
-- **Relevance**: `BoredApiRelevanceStrategy` (keywords: activity, activities, idea, ideas, bored, boredom, what to do,
-  something to do, suggestion, suggestions, random activity)
+- **Preset file**: `config/McpPresets.kt` → `BORED_API_PRESET`
 
-To run and verify:
+#### Lifecycle and Launch
+
+The host launches Bored API via STDIO transport:
+
+- **Command**: `node dist/index.js`
+- **Working directory**: `mcp-servers/bored-api-mcp` (resolved relative to process cwd)
+- **Build prerequisite**: `npm run build` must be run first to produce `dist/index.js`
+
+**Build steps (required before use):**
 
 ```bash
 cd mcp-servers/bored-api-mcp
 npm install
 npm run build
-node dist/index.js  # or: npm run dev
 ```
 
-In the app, enable "Bored API" in MCP settings and click "Check connection". Send a message like "I'm bored, give me
-an activity idea" to test relevance routing.
+**How the host starts it:**
+
+1. `StdioMcpClient` receives `McpServerConfig` with `workingDirectory = "mcp-servers/bored-api-mcp"`.
+2. Working directory is resolved via `java.io.File(workingDirectory).absoluteFile` (relative to cwd).
+3. Process is launched: `node dist/index.js` in that directory.
+4. Client performs MCP handshake (initialize → tools/list → resources/list → prompts/list).
+
+**Development mode (alternative):**
+
+```bash
+cd mcp-servers/bored-api-mcp
+npm run dev  # Uses tsx for hot-reload, no pre-build needed
+```
+
+Note: The production preset uses `node dist/index.js` to avoid npx overhead on each launch.
+
+#### Relevance Strategy
+
+- **Strategy class**: `BoredApiRelevanceStrategy`
+- **Registration**: By server type `bored-api` in `DefaultMcpRelevanceStrategyRegistry.withDefaults()` (see `McpRelevanceStrategyRegistry.kt:37-38`)
+- **Keywords (EN)**: activity, activities, idea, ideas, bored, boredom, what to do, something to do, suggestion, suggestions, random activity
+- **Keywords (RU)**: скучно, мне скучно, занятие, занятия, чем заняться, что делать, предложи, предложение, идея, идеи, развлечение, развлечения, чем развлечься, какое занятие, подскажи чем заняться, хочу чем-то заняться
+
+When the router evaluates an optional Bored API server, `BoredApiRelevanceStrategy.isRelevant()` checks for keyword matches (case-insensitive). If matched, the server is selected for context fetching.
+
+#### Limitations and Expected Behavior
+
+- **Build required**: If `dist/index.js` is missing, healthcheck and context fetching will fail with a process launch error.
+- **Working directory**: Must be correct relative to app cwd (typically repo root). If cwd changes, the path resolution may break.
+- **Healthcheck**: Uses the same session path as context fetching (initialize → tools/list). A running server is required.
+- **No persistence**: Server state is not saved between sessions; each session starts fresh.
+- **Network dependency**: The server calls the external Bored API (https://bored-api.appbrewery.com/) — network issues will affect results.
+
+#### Verification
+
+1. Build: `cd mcp-servers/bored-api-mcp && npm install && npm run build`
+2. In the app: enable "Bored API" in MCP settings → click "Check connection" (should show Online).
+3. Test routing: send "I'm bored, give me an activity idea" — the router should select Bored API as relevant.
 
 ## Healthcheck and logging
 

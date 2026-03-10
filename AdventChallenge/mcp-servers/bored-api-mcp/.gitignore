@@ -35,6 +35,11 @@ yarn-error.log*
 Thumbs.db
 *.pem
 
+# Agent/IDE debris (do not re-add to repo)
+.agent/
+.claude/
+.cursor/
+
 # IDE
 .vscode/
 .idea/

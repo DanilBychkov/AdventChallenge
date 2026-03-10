@@ -35,9 +35,28 @@ object McpPresets {
 
     /**
      * Bored API MCP preset — local MCP server for random activity suggestions.
-     * Located in mcp-servers/bored-api-mcp folder.
-     * The workingDirectory is set to the bored-api-mcp folder relative to repo root.
-     * Requires: node dist/index.js to be runnable from that directory.
+     *
+     * LOCATION: mcp-servers/bored-api-mcp folder.
+     *
+     * LAUNCH STRATEGY (production mode):
+     * - Command: node dist/index.js
+     * - Requires pre-build: npm run build (or mcp-use build) in mcp-servers/bored-api-mcp
+     * - Build output: dist/index.js (compiled JavaScript from index.ts)
+     *
+     * WORKING DIRECTORY:
+     * - workingDirectory = "mcp-servers/bored-api-mcp"
+     * - Resolved via java.io.File(wd).absoluteFile in StdioMcpClient
+     * - Relative to process cwd (typically repo root: AdventChallenge/)
+     *
+     * HEALTHCHECK BEHAVIOR:
+     * - If dist/index.js is missing (not built), healthcheck will fail with error:
+     *   "Unexpected healthcheck error: Cannot run program "node" (in directory "...")"
+     *   or similar file not found error from the OS.
+     * - Build prerequisite: cd mcp-servers/bored-api-mcp && npm install && npm run build
+     *
+     * ALTERNATIVE (dev mode, not used in production):
+     * - Could use: npx tsx index.ts (no pre-build required)
+     * - Not chosen for production to avoid npx overhead on each healthcheck
      */
     val BORED_API_PRESET = McpServerConfig(
         id = "bored-api",

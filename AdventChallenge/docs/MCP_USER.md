@@ -60,4 +60,53 @@ can turn it off in MCP settings if you don’t want it used.
 
 ## Bored API
 
-Bored API is a local MCP server (in the repo at `mcp-servers/bored-api-mcp`). It suggests random activities when you ask for ideas or things to do. Enable it in MCP settings; the app runs it with `node dist/index.js` from that folder. Build the server first: `cd mcp-servers/bored-api-mcp && npm install && npm run build`. Use **Check connection** in MCP settings to verify it is online.
+Bored API — это локальный MCP-сервер для подбора случайных занятий, когда вы ищете идеи или чем заняться.
+
+### Как включить
+
+1. Откройте **MCP Servers** (значок шестерёнки в заголовке главного окна).
+2. Найдите **Bored API** в списке серверов.
+3. Включите переключатель **Enabled**.
+4. При желании включите **Force usage**, чтобы сервер использовался для всех подходящих запросов.
+
+### Предварительные требования
+
+Сервер запускается командой `node dist/index.js` из папки `mcp-servers/bored-api-mcp`. Перед первым использованием **обязательно соберите проект**:
+
+```bash
+cd mcp-servers/bored-api-mcp
+npm install
+npm run build
+```
+
+После сборки появится файл `dist/index.js`, необходимый для работы сервера. Без него healthcheck завершится с ошибкой.
+
+### Проверка соединения
+
+После включения нажмите **Check connection** в настройках MCP:
+
+- **Online** — сервер работает, готов к использованию.
+- **Offline** / **Error** — сервер не отвечает. Возможные причины:
+  - Не выполнена сборка: `dist/index.js` отсутствует → выполните `npm run build` в папке `mcp-servers/bored-api-mcp`.
+  - Файл не найден: проверьте, что папка `mcp-servers/bored-api-mcp` существует и содержит `dist/index.js`.
+  - Ошибка запуска процесса: проверьте логи приложения или попробуйте запустить `node dist/index.js` вручную из папки сервера.
+
+### Примеры запросов
+
+Сервер активируется по ключевым словам в вашем сообщении. Примеры запросов, которые вызовут Bored API:
+
+**На русском:**
+- «Мне скучно»
+- «Предложи занятие»
+- «Чем заняться?»
+- «Хочу идеи для развлечения»
+- «Подскажи какое-нибудь занятие»
+
+**In English:**
+- «I'm bored»
+- «Give me activity ideas»
+- «What to do?»
+- «Suggest something fun»
+- «Random activity please»
+
+Если сервер Offline или выключен, ассистент ответит без использования Bored API.

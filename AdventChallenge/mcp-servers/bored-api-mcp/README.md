@@ -25,39 +25,78 @@ Find an activity matching specific criteria:
 - `minPrice` / `maxPrice`: Filter by price range (0-1)
 - `minAccessibility` / `maxAccessibility`: Filter by accessibility range (0-1)
 
-## Getting Started
-
-### Install dependencies
+## Installation
 
 ```bash
 npm install
 ```
 
-### Development mode
+## Usage
 
-```bash
-npm run dev
-```
+### Production (Bothub Client host)
 
-### Build for production
+The Bothub Client host application launches this server using:
+
+- **Command**: `node dist/index.js`
+- **Working directory**: `mcp-servers/bored-api-mcp` (this folder)
+
+**Build is required before first use:**
 
 ```bash
 npm run build
 ```
 
-### Start production server
+This produces `dist/index.js` which the host expects. Without this file, healthcheck will fail with a process launch error.
+
+After building:
+1. In Bothub Client, open **MCP Servers** settings (gear icon in header).
+2. Enable **Bored API** in the server list.
+3. Click **Check connection** — status should show **Online**.
+
+See `docs/MCP_USER.md` and `docs/MCP_DEVELOPER.md` in the repo root for detailed setup and troubleshooting.
+
+### Development (local testing)
+
+For development with hot-reload (no pre-build needed):
 
 ```bash
-npm run start
+npm run dev
+```
+
+This uses `tsx` to run `index.ts` directly with live reload.
+
+### Standalone production
+
+To run the production build standalone:
+
+```bash
+npm run start   # Equivalent to: node dist/index.js
 ```
 
 ## Verification
+
+### With MCP Inspector (development)
 
 1. Start the server: `npm run dev`
 2. Open the inspector: [http://localhost:3000/inspector](http://localhost:3000/inspector)
 3. Test the tools:
    - Call `get-random-activity` to fetch a random activity
    - Call `find-activity` with filters like `type: "recreational"` or `participants: 2`
+
+### With Bothub Client (production)
+
+1. Build: `npm run build`
+2. In the app: open **MCP Servers** → enable **Bored API** → click **Check connection**
+3. Status should show **Online**
+4. Test routing with a message like:
+   - "I'm bored, give me an activity idea"
+   - "Чем заняться?" (Russian)
+
+## Troubleshooting
+
+- **Healthcheck fails with "Cannot run program"**: `dist/index.js` is missing. Run `npm run build` in this folder.
+- **Server shows Offline**: Check that Node.js is installed and accessible, and that the working directory is correct.
+- **No activities returned**: The external Bored API may be unavailable. Check network connectivity.
 
 ## Learn More
 
