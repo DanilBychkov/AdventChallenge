@@ -69,6 +69,27 @@ results.
    your strategy for your preset’s `type`) or build a custom registry and pass it to `DefaultMcpRouter`. See *
    *MCP_ROUTING.md** for the strategy/fallback model.
 
+### Bored API (example preset)
+
+- **Preset id**: `bored-api`
+- **Type**: `bored-api`
+- **Location**: `mcp-servers/bored-api-mcp/`
+- **Tools**: `get-random-activity`, `find-activity`
+- **Relevance**: `BoredApiRelevanceStrategy` (keywords: activity, activities, idea, ideas, bored, boredom, what to do,
+  something to do, suggestion, suggestions, random activity)
+
+To run and verify:
+
+```bash
+cd mcp-servers/bored-api-mcp
+npm install
+npm run build
+node dist/index.js  # or: npm run dev
+```
+
+In the app, enable "Bored API" in MCP settings and click "Check connection". Send a message like "I'm bored, give me
+an activity idea" to test relevance routing.
+
 ## Healthcheck and logging
 
 - `CheckMcpHealthUseCase` uses `McpClient.checkHealth(server)` and updates the server’s `healthStatus` and `lastHealthCheckAt` in storage.
@@ -87,8 +108,9 @@ results.
 ## Tests
 
 - `DefaultMcpRouterTest`: forced/optional split, optional filtered by per-server strategy, forced independent of
-  relevance, unknown type uses fallback, metadata (optionalPassed, optionalFiltered).
+  relevance, unknown type uses fallback, metadata (optionalPassed, optionalFiltered), bored-api optional selection.
 - `Context7RelevanceTest`: keyword-based relevance for Context7.
+- `BoredApiRelevanceTest`: keyword-based relevance for Bored API (activity, ideas, bored, suggestion, etc.).
+- `DefaultMcpRegistryAtomicUpdateTest`: concurrent runAtomicUpdate preserves all updates (no lost update).
 - `McpContextOrchestratorTest`: orchestration with forced/optional and failure handling; optional behavior driven by
   router selection only; result is `McpEnrichedContext.content` / `.discoverySummary`.
-- Add `BoredApiRelevanceTest` for bored-api relevance; extend router test for bored-api optional selection when message matches activity/ideas.
