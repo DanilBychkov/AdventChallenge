@@ -1,0 +1,43 @@
+GOAL
+Implement the Bored API MCP server with two tools and production-ready error handling.
+
+PROJECT CONTEXT
+- Folder: AdventChallenge/mcp-servers/bored-api-mcp (mcp-use blank template already scaffolded).
+- Entry file: index.ts. Use mcp-use server, Zod, and response helpers (text, object, error) only — no throw.
+- External API: https://bored-api.appbrewery.com/
+  - GET /random — returns one random activity (JSON object with activity, type, participants, price, accessibility, etc.).
+  - GET /filter?type=...&participants=... — returns array of activities. Query params: type (optional), participants (optional). Types: education, recreational, social, charity, cooking, relaxation, busywork. Participants: 1, 2, 3, 4, 5, 6, 8.
+
+REFERENCE PATTERN
+Follow mcp-apps-builder skill: every schema field must have .describe(); return via object()/text()/error(); validate with Zod; no throw; use try/catch and return error("message") on failure.
+
+ALLOWED CHANGES
+AdventChallenge/mcp-servers/bored-api-mcp/
+- index.ts (add two tools, keep server config)
+- README.md (add run/build/check commands and Bored API description)
+
+RESTRICTIONS
+Do not add widgets or resources. Do not change package.json scripts except if needed for run/build. Do not remove existing server config (name, title, version, baseUrl, etc.).
+
+ACCEPTANCE CRITERIA
+1) Tool get-random-activity:
+   - No required parameters (or empty schema).
+   - Calls GET https://bored-api.appbrewery.com/random with HTTP timeout (e.g. 10 seconds).
+   - Returns the activity as object(...) (e.g. activity, type, participants, price, accessibility, link, key).
+   - On network/parse error or timeout: return error("...") with a clear message; do not throw.
+2) Tool find-activity:
+   - Schema with optional filters, all with .describe():
+     - type: optional string enum (education, recreational, social, charity, cooking, relaxation, busywork).
+     - participants: optional number (1, 2, 3, 4, 5, 6, or 8).
+     - minPrice: optional number 0..1; maxPrice: optional number 0..1.
+     - minAccessibility: optional number 0..1; maxAccessibility: optional number 0..1 (API returns accessibility as string; if API docs show numeric accessibility, use it; otherwise filter by price only and document that accessibility filter is best-effort or skip if not in API).
+   - Build URL: /filter with type and participants when provided. If API does not support price/accessibility query params, fetch from /filter and filter the result array in code by price/accessibility range.
+   - Returns one suitable activity as object(...). If no activities match, return error("No activity found for the given filters").
+   - HTTP timeout (e.g. 10 seconds); on failure return error("..."); do not throw.
+3) README.md in mcp-servers/bored-api-mcp:
+   - Short description of the server and Bored API.
+   - Commands: npm install, npm run dev, npm run build, npm run start.
+   - How to verify: e.g. open inspector and call get-random-activity / find-activity.
+
+VALIDATION
+From repo root: cd AdventChallenge/mcp-servers/bored-api-mcp && npm run build — must succeed.

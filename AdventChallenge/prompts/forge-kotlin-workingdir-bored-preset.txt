@@ -1,0 +1,29 @@
+GOAL
+1) Add optional workingDirectory (cwd) to MCP server config and use it when starting the STDIO process. 2) Add Bored API preset and ensure it can be started from a subfolder of the repo.
+
+PROJECT CONTEXT
+- Kotlin project: AdventChallenge (Gradle). Paths: AdventChallenge/src/main/kotlin/org/bothubclient/...
+- McpServerConfig: domain/entity/McpServerConfig.kt — add workingDirectory: String? = null. Keep kotlinx.serialization: add the new field with default so existing JSON still decodes.
+- McpPresets: config/McpPresets.kt — add BORED_API_PRESET (id=bored-api, name=Bored API, type=bored-api, command=node or npx, args to run the local MCP server in mcp-servers/bored-api-mcp). Set workingDirectory to the path of mcp-servers/bored-api-mcp (relative to repo root or absolute; host will resolve — use a placeholder like "mcp-servers/bored-api-mcp" or document that it must be set to the full path of the folder containing the MCP server). For STDIO, the server is started via node dist/index.js or npx tsx index.ts from that folder; use command "node", args ["dist/index.js"] and workingDirectory so the process runs in that folder.
+- StdioMcpClient: infrastructure/mcp/StdioMcpClient.kt — in runMcpSession, when building ProcessBuilder, if server.workingDirectory is not null/blank, call processBuilder.directory(File(server.workingDirectory)) so the subprocess runs in that directory. Handle path resolution: use File(server.workingDirectory).absoluteFile so that relative paths are resolved against the current working directory of the host (or document that workingDirectory must be absolute). Prefer resolving against repo root if available; if not, use File(server.workingDirectory).absoluteFile.
+
+REFERENCE PATTERN
+- McpPresets already has CONTEXT7_PRESET with command, args, type. Add BORED_API_PRESET the same way; add workingDirectory to the preset pointing to the bored-api-mcp folder (e.g. system property or env for repo root + "mcp-servers/bored-api-mcp", or a placeholder that the host can replace — for simplicity use a relative path "mcp-servers/bored-api-mcp" and in StdioMcpClient resolve relative to the current working directory, or use java.io.File(workingDirectory).absoluteFile).
+- ProcessBuilder.directory(File) sets the working directory of the subprocess.
+
+ALLOWED CHANGES
+- AdventChallenge/src/main/kotlin/org/bothubclient/domain/entity/McpServerConfig.kt
+- AdventChallenge/src/main/kotlin/org/bothubclient/config/McpPresets.kt
+- AdventChallenge/src/main/kotlin/org/bothubclient/infrastructure/mcp/StdioMcpClient.kt
+
+RESTRICTIONS
+Do not change Context7 preset. Do not remove or rename existing McpServerConfig fields. Do not change HTTP transport or discovery logic.
+
+ACCEPTANCE CRITERIA
+1) McpServerConfig has workingDirectory: String? = null (with @Serializable if needed; default so existing saved configs load).
+2) getAllPresets() returns both CONTEXT7_PRESET and BORED_API_PRESET. BORED_API_PRESET: id=bored-api, name=Bored API, type=bored-api, command=node, args=[dist/index.js] or equivalent to run the MCP server, workingDirectory set to a path that resolves to mcp-servers/bored-api-mcp (e.g. relative path from repo root; if repo root is not easily available in config, use workingDirectory = "mcp-servers/bored-api-mcp" and in StdioMcpClient resolve relative to System.getProperty("user.dir") or the JVM cwd).
+3) StdioMcpClient.runMcpSession: before processBuilder.start(), if server.workingDirectory is not null and not blank, set processBuilder.directory(File(server.workingDirectory).absoluteFile). Do not set directory if workingDirectory is null or blank.
+4) Build: ./gradlew compileKotlin succeeds from AdventChallenge directory (the one containing gradlew).
+
+VALIDATION
+From repo root: cd AdventChallenge; $env:GRADLE_USER_HOME = (Join-Path (Get-Location) ".gradle-codex"); .\gradlew compileKotlin
