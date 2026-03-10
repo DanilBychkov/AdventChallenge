@@ -1,31 +1,25 @@
 package org.bothubclient.application.mcp
 
-private val CONTEXT7_RELEVANCE_KEYWORDS = listOf(
-    "documentation",
-    "документация",
-    "документацию",
-    "docs",
-    "api",
-    "how to use",
-    "example",
-    "examples",
-    "migration",
-    "migrate",
-    "upgrade",
-    "library",
-    "coroutines",
-    "framework",
-    "sdk",
-    "package",
-    "npm",
-    "pip",
-    "latest version"
-)
+import org.bothubclient.domain.entity.McpServerConfig
 
 /**
  * Heuristic Context7 relevance check for documentation and SDK-centric questions.
  */
 fun isContext7Relevant(userMessage: String): Boolean {
-    val normalizedMessage = userMessage.lowercase()
-    return CONTEXT7_RELEVANCE_KEYWORDS.any { keyword -> normalizedMessage.contains(keyword) }
+    return context7RelevanceStrategy
+        .isRelevant(
+            server = CONTEXT7_DUMMY_SERVER,
+            userMessage = userMessage,
+            context = null
+        )
+        .relevant
 }
+
+private val context7RelevanceStrategy = Context7RelevanceStrategy()
+
+private val CONTEXT7_DUMMY_SERVER = McpServerConfig(
+    id = CONTEXT7_SERVER_TYPE,
+    name = "Context7",
+    type = CONTEXT7_SERVER_TYPE,
+    description = ""
+)
