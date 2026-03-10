@@ -28,4 +28,14 @@ interface McpRegistry {
      * Ordered by priority ascending (lower number = higher priority).
      */
     suspend fun getForced(): List<McpServerConfig>
+
+    /**
+     * Atomically reads, modifies, and writes MCP server configurations.
+     * Acquires a lock, loads from storage, merges with presets, applies the block,
+     * saves the result, and releases the lock.
+     * 
+     * @param block A suspend function that receives the merged list and returns the modified list.
+     * @return The result of the block operation.
+     */
+    suspend fun <T> runAtomicUpdate(block: suspend (List<McpServerConfig>) -> Pair<List<McpServerConfig>, T>): T
 }

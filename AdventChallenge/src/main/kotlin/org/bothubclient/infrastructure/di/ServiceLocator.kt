@@ -175,13 +175,12 @@ object ServiceLocator {
     }
 
     val updateMcpServerUseCase: UpdateMcpServerUseCase by lazy {
-        UpdateMcpServerUseCase(registry = mcpRegistry, storage = mcpSettingsStorage)
+        UpdateMcpServerUseCase(registry = mcpRegistry)
     }
 
     val checkMcpHealthUseCase: CheckMcpHealthUseCase by lazy {
         CheckMcpHealthUseCase(
             registry = mcpRegistry,
-            storage = mcpSettingsStorage,
             mcpClient = mcpClient
         )
     }
