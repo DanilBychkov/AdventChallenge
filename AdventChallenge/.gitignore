@@ -45,3 +45,11 @@ bin/
 
 ### Mac OS ###
 .DS_Store
+
+### MCP server agent/IDE debris (do not re-add) ###
+mcp-servers/bored-api-mcp/.agent/
+mcp-servers/bored-api-mcp/.claude/
+mcp-servers/bored-api-mcp/.cursor/
+
+### Local prompt drafts (not for commit) ###
+prompts/forge-bored-api-production-*.txt

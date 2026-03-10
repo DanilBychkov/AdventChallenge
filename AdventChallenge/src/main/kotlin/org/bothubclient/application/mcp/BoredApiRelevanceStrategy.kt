@@ -25,15 +25,27 @@ internal fun isBoredApiRelevantMessage(userMessage: String): Boolean {
 }
 
 internal val BORED_API_RELEVANCE_KEYWORDS = listOf(
+    // English: strong boredom/activity intent only (no generic "idea"/"suggest")
     "activity",
     "activities",
-    "idea",
-    "ideas",
     "bored",
     "boredom",
     "what to do",
     "something to do",
-    "suggestion",
-    "suggestions",
-    "random activity"
+    "random activity",
+    // Russian: strong boredom/activity/leisure intent only (no generic "идея"/"предложи")
+    "скучно",
+    "мне скучно",
+    "занятие",
+    "занятия",
+    "чем заняться",
+    "что делать",
+    "развлечение",
+    "развлечения",
+    "развлечений",
+    "чем развлечься",
+    "какое занятие",
+    "подскажи чем заняться",
+    "хочу чем-то заняться",
+    "досуг"
 )
