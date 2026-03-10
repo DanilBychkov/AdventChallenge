@@ -33,7 +33,33 @@ object McpPresets {
         lastHealthCheckAt = null
     )
 
-    fun getAllPresets(): List<McpServerConfig> = listOf(CONTEXT7_PRESET)
+    /**
+     * Bored API MCP preset — local MCP server for random activity suggestions.
+     * Located in mcp-servers/bored-api-mcp folder.
+     * The workingDirectory is set to the bored-api-mcp folder relative to repo root.
+     * Requires: node dist/index.js to be runnable from that directory.
+     */
+    val BORED_API_PRESET = McpServerConfig(
+        id = "bored-api",
+        name = "Bored API",
+        type = "bored-api",
+        description = "Random activity suggestions (local MCP server in mcp-servers/bored-api-mcp)",
+        enabled = false,
+        forceUsage = false,
+        transportType = McpTransportType.STDIO,
+        command = "node",
+        args = listOf("dist/index.js"),
+        env = null,
+        url = null,
+        headers = null,
+        capabilities = null,
+        priority = 50,
+        healthStatus = McpHealthStatus.UNKNOWN,
+        lastHealthCheckAt = null,
+        workingDirectory = "mcp-servers/bored-api-mcp"
+    )
+
+    fun getAllPresets(): List<McpServerConfig> = listOf(CONTEXT7_PRESET, BORED_API_PRESET)
 
     fun getPresetById(id: String): McpServerConfig? = getAllPresets().find { it.id == id }
 }

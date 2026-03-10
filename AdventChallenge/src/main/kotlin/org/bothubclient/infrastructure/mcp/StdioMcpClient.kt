@@ -205,6 +205,9 @@ class StdioMcpClient(
     ): T {
         val processBuilder = ProcessBuilder(buildProcessCommand(server))
         server.env.orEmpty().forEach { (key, value) -> processBuilder.environment()[key] = value }
+        server.workingDirectory?.takeIf { it.isNotBlank() }?.let { wd ->
+            processBuilder.directory(java.io.File(wd).absoluteFile)
+        }
         processBuilder.redirectErrorStream(false)
         val process = processBuilder.start()
 

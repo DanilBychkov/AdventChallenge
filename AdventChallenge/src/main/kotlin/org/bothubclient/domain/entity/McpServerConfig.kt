@@ -33,7 +33,8 @@ data class McpServerConfig(
     val capabilities: List<String>? = null,
     val priority: Int = 50,
     val healthStatus: McpHealthStatus = McpHealthStatus.UNKNOWN,
-    val lastHealthCheckAt: Long? = null
+    val lastHealthCheckAt: Long? = null,
+    val workingDirectory: String? = null
 ) {
     init {
         require(priority in 0..100) { "Priority must be in range 0..100, but was $priority" }

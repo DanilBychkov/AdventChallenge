@@ -35,6 +35,7 @@ class DefaultMcpRelevanceStrategyRegistry(
         ): DefaultMcpRelevanceStrategyRegistry {
             return DefaultMcpRelevanceStrategyRegistry(fallbackStrategy).apply {
                 registerForType(CONTEXT7_SERVER_TYPE, Context7RelevanceStrategy())
+                registerForType(BORED_API_SERVER_TYPE, BoredApiRelevanceStrategy())
             }
         }
     }

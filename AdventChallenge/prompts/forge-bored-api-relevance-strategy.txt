@@ -1,0 +1,25 @@
+GOAL
+Add BoredApiRelevanceStrategy so that the MCP router can select the Bored API server for activity/ideas-related user messages (not only Context7 for docs).
+
+PROJECT CONTEXT
+- Kotlin project under AdventChallenge/src/main/kotlin/org/bothubclient/application/mcp/.
+- Context7RelevanceStrategy: has CONTEXT7_SERVER_TYPE = "context7", implements McpRelevanceStrategy, uses keyword list CONTEXT7_RELEVANCE_KEYWORDS; isRelevant returns McpRelevanceResult(relevant, reason).
+- DefaultMcpRelevanceStrategyRegistry.withDefaults() registers only Context7; we need to register Bored API for type "bored-api".
+- Server-specific matchers: docs/API/SDK -> context7; activity/ideas/boredom/what to do -> bored-api.
+
+REFERENCE PATTERN
+Copy the structure of Context7RelevanceStrategy.kt: constant for server type, class implementing McpRelevanceStrategy, internal function for keyword check, list of keywords. Register in DefaultMcpRelevanceStrategyRegistry.companion withDefaults() by adding registerForType(BORED_API_SERVER_TYPE, BoredApiRelevanceStrategy()).
+
+ALLOWED CHANGES
+- AdventChallenge/src/main/kotlin/org/bothubclient/application/mcp/ (new file BoredApiRelevanceStrategy.kt and edit McpRelevanceStrategyRegistry.kt DefaultMcpRelevanceStrategyRegistry.withDefaults())
+
+RESTRICTIONS
+Do not change Context7RelevanceStrategy or Context7 keywords. Do not change McpRouter or orchestrator logic beyond the registry.
+
+ACCEPTANCE CRITERIA
+1) New file BoredApiRelevanceStrategy.kt: const BORED_API_SERVER_TYPE = "bored-api"; class BoredApiRelevanceStrategy : McpRelevanceStrategy; internal keyword list for activity/ideas/boredom (e.g. activity, activities, idea, ideas, bored, boredom, what to do, something to do, suggestion, suggestions, random activity); isRelevant returns relevant=true when message contains any keyword (case-insensitive), reason "bored_api_keyword_match" or "bored_api_no_keyword_match".
+2) DefaultMcpRelevanceStrategyRegistry.withDefaults(): add registerForType(BORED_API_SERVER_TYPE, BoredApiRelevanceStrategy()) after the Context7 registration.
+3) Build: ./gradlew compileKotlin succeeds.
+
+VALIDATION
+From AdventChallenge directory: .\gradlew compileKotlin
