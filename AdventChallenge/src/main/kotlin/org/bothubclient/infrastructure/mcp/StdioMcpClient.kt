@@ -19,7 +19,8 @@ import java.util.concurrent.atomic.AtomicReference
 
 class StdioMcpClient(
     private val logger: Logger = NoOpLogger,
-    private val json: Json = Json { ignoreUnknownKeys = true }
+    private val json: Json = Json { ignoreUnknownKeys = true },
+    private val fetchStrategySelector: (McpServerConfig) -> StdioMcpFetchStrategy = { DefaultStdioMcpFetchStrategy() }
 ) : McpClient {
     private companion object {
         const val TAG = "StdioMcpClient"
@@ -116,7 +117,7 @@ class StdioMcpClient(
                         return@runMcpSession McpFetchResult.Failure("No tools returned by MCP server")
                     }
 
-                    val attemptResult = callToolsForQuery(session, tools, query)
+                    val attemptResult = callToolsForQuery(session, server, tools, query)
                     AppLogger.i(
                         TAG,
                         "[MCP] callToolsForQuery result: ${if (attemptResult is McpFetchResult.Success) "Success contentLen=${attemptResult.content.length}" else "Failure reason=${(attemptResult as McpFetchResult.Failure).reason}"}"
@@ -268,15 +269,21 @@ class StdioMcpClient(
 
     private suspend fun callToolsForQuery(
         session: McpSession,
+        server: McpServerConfig,
         tools: List<JsonObject>,
         query: String
     ): McpFetchResult {
-        val resolvedLibraryId = resolveLibraryIdIfAvailable(session, tools, query)
-        AppLogger.i(TAG, "[MCP] callToolsForQuery resolvedLibraryId=$resolvedLibraryId")
+        val fetchStrategy = fetchStrategySelector(server)
+        val resolvedPreference = fetchStrategy.resolvePreference(
+            session = SessionToolSession(session),
+            tools = tools,
+            query = query
+        )
+        AppLogger.i(TAG, "[MCP] callToolsForQuery resolvedPreference=$resolvedPreference")
 
-        for (tool in prioritizeTools(tools)) {
+        for (tool in fetchStrategy.prioritizeTools(tools)) {
             val toolName = tool["name"]?.jsonPrimitive?.contentOrNull ?: continue
-            val argumentCandidates = buildArgumentCandidates(tool, query, resolvedLibraryId)
+            val argumentCandidates = fetchStrategy.buildArgumentCandidates(tool, query, resolvedPreference)
             AppLogger.i(TAG, "[MCP] callToolsForQuery tool='$toolName' candidates=${argumentCandidates.size}")
 
             for (arguments in argumentCandidates) {
@@ -323,159 +330,7 @@ class StdioMcpClient(
 
         AppLogger.w(TAG, "[MCP] callToolsForQuery FAIL no tool returned usable content")
         return McpFetchResult.Failure("MCP server returned no usable content for query")
-    }
-
-    /**
-     * Calls resolve-library-id (Context7 search: GET /api/v2/libs/search).
-     * Tries libraryName and variants (e.g. kotlinx.coroutines → Kotlin Coroutines, kotlinx-coroutines) until one returns an ID.
-     * See https://context7.com/docs/api-guide
-     */
-    private suspend fun resolveLibraryIdIfAvailable(
-        session: McpSession,
-        tools: List<JsonObject>,
-        query: String
-    ): String? {
-        val resolveTool = tools.find {
-            it["name"]?.jsonPrimitive?.contentOrNull?.contains(
-                "resolve-library-id",
-                ignoreCase = true
-            ) == true
-        }
-        if (resolveTool == null) {
-            AppLogger.w(TAG, "[MCP] resolveLibraryId: no resolve-library-id tool found")
-            return null
-        }
-        val baseName = Context7QueryHelper.extractLibraryName(query)
-        AppLogger.i(TAG, "[MCP] resolveLibraryId extractLibraryName query=${query.take(60)} -> baseName='$baseName'")
-        if (baseName.isBlank()) return null
-        val namesToTry = Context7QueryHelper.libraryNameVariants(baseName)
-        AppLogger.i(TAG, "[MCP] resolveLibraryId namesToTry=$namesToTry")
-        for (libraryName in namesToTry) {
-            val response = runCatching {
-                session.request(
-                    method = "tools/call",
-                    params = buildJsonObject {
-                        put("name", resolveTool["name"]?.jsonPrimitive?.contentOrNull ?: "resolve-library-id")
-                        put(
-                            "arguments",
-                            buildJsonObject {
-                                put("libraryName", libraryName)
-                                put("query", query.take(500))
-                            }
-                        )
-                    }
-                )
-            }.getOrNull() ?: run {
-                AppLogger.w(TAG, "[MCP] resolveLibraryId attempt libraryName='$libraryName' request failed")
-                continue
-            }
-            val content = extractContent(response)
-            val parsedId = Context7QueryHelper.parseLibraryIdFromResolveResponse(content)
-            AppLogger.i(
-                TAG,
-                "[MCP] resolveLibraryId attempt libraryName='$libraryName' contentLen=${content.length} parsedId=$parsedId contentPreview=${
-                    content.take(120)
-                }"
-            )
-            if (content.isBlank()) continue
-            parsedId?.let {
-                AppLogger.i(TAG, "[MCP] resolveLibraryId SUCCESS resolvedId='$it'")
-                return it
-            }
-        }
-        AppLogger.w(TAG, "[MCP] resolveLibraryId FAIL no ID from any variant")
-        return null
-    }
-
-    private fun prioritizeTools(tools: List<JsonObject>): List<JsonObject> {
-        val weights = mapOf(
-            "get-library-docs" to 0,
-            "query-docs" to 0,
-            "search" to 1,
-            "query" to 2,
-            "lookup" to 3,
-            "resolve-library-id" to 4
-        )
-
-        return tools.sortedBy { tool ->
-            val name = tool["name"]?.jsonPrimitive?.contentOrNull.orEmpty()
-            weights.entries.firstOrNull { name.contains(it.key, ignoreCase = true) }?.value ?: 10
-        }
-    }
-
-    private fun buildArgumentCandidates(
-        tool: JsonObject,
-        query: String,
-        resolvedLibraryId: String? = null
-    ): List<JsonObject> {
-        val toolName = tool["name"]?.jsonPrimitive?.contentOrNull.orEmpty()
-        val schema = tool["inputSchema"]?.jsonObject
-        val properties = schema?.get("properties")?.jsonObject.orEmpty()
-        val required = schema?.get("required")?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull }.orEmpty()
-
-        val inferred = buildJsonObject {
-            val keys = if (required.isNotEmpty()) required else properties.keys.toList()
-            keys.forEach { key -> put(key, query) }
-            if (keys.isEmpty()) {
-                put("query", query)
-            }
-        }
-
-        val generic = buildJsonObject { put("query", query) }
-
-        val context7WithQuery = buildJsonObject {
-            put("libraryName", query)
-            put("context7CompatibleLibraryID", query)
-            put("topic", query)
-            put("tokens", 6000)
-        }
-
-        return buildList {
-            val isGetLibraryDocs = toolName.contains("get-library-docs", ignoreCase = true)
-            val isQueryDocs = toolName.contains("query-docs", ignoreCase = true)
-            val extractedName = Context7QueryHelper.extractLibraryName(query)
-
-            if (isQueryDocs && resolvedLibraryId != null) {
-                add(
-                    buildJsonObject {
-                        put("libraryId", resolvedLibraryId)
-                        put("topic", extractedName.take(200))
-                        put("tokens", 6000)
-                    }
-                )
-                add(
-                    buildJsonObject {
-                        put("libraryId", resolvedLibraryId)
-                        put("query", extractedName.take(200))
-                        put("tokens", 6000)
-                    }
-                )
-            }
-
-            if (isGetLibraryDocs) {
-                if (resolvedLibraryId != null) {
-                    add(
-                        buildJsonObject {
-                            put("context7CompatibleLibraryID", resolvedLibraryId)
-                            put("topic", extractedName.take(200))
-                            put("tokens", 6000)
-                        }
-                    )
-                }
-                add(context7WithQuery)
-            }
-            if (toolName.contains("resolve-library-id", ignoreCase = true)) {
-                add(
-                    buildJsonObject {
-                        put("libraryName", Context7QueryHelper.extractLibraryName(query))
-                        put("query", query.take(500))
-                    }
-                )
-            }
-            add(inferred)
-            add(generic)
-        }.distinctBy { it.toString() }
-    }
+    }
 
     private fun extractTools(response: JsonObject): List<JsonObject> {
         val tools = response["result"]
@@ -545,6 +400,20 @@ class StdioMcpClient(
     private fun logFetch(serverId: String, success: Boolean, reason: String?) {
         val suffix = if (reason.isNullOrBlank()) "" else " reason=$reason"
         logger.log(TAG, "MCP fetch server=$serverId success=$success$suffix")
+    }
+
+    private class SessionToolSession(private val session: McpSession) : StdioMcpToolSession {
+        override suspend fun callTool(toolName: String, arguments: JsonObject): JsonObject? {
+            return runCatching {
+                session.request(
+                    method = "tools/call",
+                    params = buildJsonObject {
+                        put("name", toolName)
+                        put("arguments", arguments)
+                    }
+                )
+            }.getOrNull()
+        }
     }
 
     private inner class McpSession(
@@ -645,3 +514,5 @@ class StdioMcpClient(
         }
     }
 }
+
+

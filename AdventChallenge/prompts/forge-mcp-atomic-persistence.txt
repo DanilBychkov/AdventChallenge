@@ -1,0 +1,30 @@
+GOAL
+Make MCP server config read-modify-write atomic to avoid race conditions when multiple updates (e.g. UpdateMcpServerUseCase and CheckMcpHealthUseCase) run concurrently.
+
+PROJECT CONTEXT
+- UpdateMcpServerUseCase: gets registry.getAll(), maps to replace one server by id, calls storage.saveServers(updated).
+- CheckMcpHealthUseCase: gets registry.getAll(), maps to update health for one server, calls storage.saveServers(updated).
+- DefaultMcpRegistry.getAll(): loads from storage, merges with presets, returns merged list.
+- Race: two concurrent updates can both read the same list, each modify one entry, then both write — last write wins and one update is lost.
+
+REFERENCE PATTERN
+Use a single lock (e.g. kotlinx.coroutines.sync.Mutex) so that the sequence load -> merge -> modify -> save is atomic. Add to McpRegistry (interface) a method runAtomicUpdate(block: suspend (List<McpServerConfig>) -> List<McpServerConfig>) that: acquires lock; loads from storage; merges with presets (same logic as getAll()); calls block(merged); saves result to storage; releases lock. UpdateMcpServerUseCase and CheckMcpHealthUseCase then use runAtomicUpdate instead of getAll() + saveServers().
+
+ALLOWED CHANGES
+- org.bothubclient.domain.repository.McpRegistry — add suspend fun runAtomicUpdate(block: suspend (List<McpServerConfig>) -> List<McpServerConfig>)
+- org.bothubclient.infrastructure.repository.DefaultMcpRegistry — implement runAtomicUpdate with Mutex, load, merge (reuse same logic as getAll), block(merged), save
+- org.bothubclient.application.usecase.UpdateMcpServerUseCase — use registry.runAtomicUpdate { list -> list.map { if (it.id == server.id) server else it } } instead of getAll + saveServers
+- org.bothubclient.application.usecase.CheckMcpHealthUseCase — use registry.runAtomicUpdate to update health for the target server instead of getAll + saveServers
+
+RESTRICTIONS
+Do not change FileMcpSettingsStorage method signatures (loadServers/saveServers). Do not change the merge logic (presets + stored by id).
+
+ACCEPTANCE CRITERIA
+1) McpRegistry has suspend fun runAtomicUpdate(block: suspend (List<McpServerConfig>) -> List<McpServerConfig>).
+2) DefaultMcpRegistry implements it with Mutex; inside the lock: loaded = storage.loadServers(); merged = same merge as getAll(); newList = block(merged); storage.saveServers(newList).
+3) UpdateMcpServerUseCase.invoke(server) calls registry.runAtomicUpdate { list -> list.map { if (it.id == server.id) server else it } }.
+4) CheckMcpHealthUseCase uses registry.runAtomicUpdate to apply health update (replace the server in the list by id with the updated config).
+5) ./gradlew compileKotlin succeeds.
+
+VALIDATION
+.\gradlew compileKotlin
