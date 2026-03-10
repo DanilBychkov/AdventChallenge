@@ -60,28 +60,30 @@ with host-side tool execution).
 
 ## Data flow (per user message)
 
-1. **Router** — `McpRouter.selectForRequest(userMessage)` returns forced and optional servers (by enabled, force usage,
-   Context7 relevance).
+1. **Router** — `McpRouter.selectForRequest(userMessage)` returns forced and optional servers: forced = enabled +
+   forceUsage; optional = enabled, not forced, and **relevant** according to a **per-server relevance strategy** (see
+   MCP_DEVELOPER.md). The router uses `McpRelevanceStrategyRegistry` to filter optional servers; unknown server types
+   use a configurable fallback (default: not relevant).
 2. **Discovery** — For each selected server, `McpClient.discover(server)` runs one session: initialize → tools/list →
    resources/list → prompts/list. Results are aggregated into a discovery summary (tools, resources, prompts per
    server).
-3. **Fetch** — For forced servers and (if relevant) first successful optional server,
+3. **Fetch** — For forced servers, then for optional servers (in order until one succeeds),
    `McpClient.fetchContext(server, userMessage)` runs a session and calls MCP tools internally; returned text is the
-   “MCP context” block.
+   “MCP context” block. The orchestrator trusts the router’s selection (no additional relevance gate).
 4. **Harness** — System prompt is built from: base prompt + profile + **MCP behavior rules** + **Available MCP tools (
    discovery)** + **MCP context** (pre-fetched content). The LLM sees what capabilities exist and the pre-fetched
    content; it does not send tool_calls (chat API does not support tools yet).
 
 ## Components (aligned with 01-single-agent-single-mcp)
 
-| Component          | Role                                                                                                                 |
-|--------------------|----------------------------------------------------------------------------------------------------------------------|
-| **User interface** | Chat screen, message input, MCP settings (enable/force, health).                                                     |
-| **LLM**            | Remote API (e.g. Bothub); receives system prompt + user message.                                                     |
-| **Agent logic**    | `CompressingChatAgent`: builds context, calls orchestrator, injects discovery + content.                             |
-| **MCP client**     | `StdioMcpClient`: discovery (tools/list, resources/list, prompts/list), fetchContext (tool invocation), checkHealth. |
-| **Router**         | `DefaultMcpRouter`: selects which MCP servers to use for the request.                                                |
-| **Orchestrator**   | `McpContextOrchestrator`: runs discovery for selected servers, fetches context, returns `McpEnrichedContext`.        |
+| Component          | Role                                                                                                                  |
+|--------------------|-----------------------------------------------------------------------------------------------------------------------|
+| **User interface** | Chat screen, message input, MCP settings (enable/force, health).                                                      |
+| **LLM**            | Remote API (e.g. Bothub); receives system prompt + user message.                                                      |
+| **Agent logic**    | `CompressingChatAgent`: builds context, calls orchestrator, injects discovery + content.                              |
+| **MCP client**     | `StdioMcpClient`: discovery (tools/list, resources/list, prompts/list), fetchContext (tool invocation), checkHealth.  |
+| **Router**         | `DefaultMcpRouter`: selects which MCP servers to use (forced + optional filtered by per-server relevance strategies). |
+| **Orchestrator**   | `McpContextOrchestrator`: runs discovery for selected servers, fetches context, returns `McpEnrichedContext`.         |
 
 ## MCP primitives (what the model “sees”)
 

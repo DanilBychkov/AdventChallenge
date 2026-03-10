@@ -72,31 +72,6 @@ class McpContextOrchestrator(
             }
         }
 
-        val isRelevant = isContext7Relevant(userMessage)
-        val shouldUseOptional = selection.optionalServers.isNotEmpty() && isRelevant
-        AppLogger.i(
-            TAG,
-            "MCP shouldUseOptional=$shouldUseOptional isContext7Relevant=$isRelevant optionalCount=${selection.optionalServers.size}"
-        )
-        if (!shouldUseOptional) {
-            if (selection.optionalServers.isNotEmpty()) {
-                AppLogger.i(
-                    TAG,
-                    "MCP optional skipped sessionId=$sessionId reason=context7_not_relevant"
-                )
-            }
-            val contentStr = chunks.joinToString(separator = "\n")
-            AppLogger.i(
-                TAG,
-                "MCP fetchEnrichedContext RETURN (no optional) contentLen=${contentStr.length} lastError=$lastFailureReason"
-            )
-            return McpEnrichedContext(
-                discoverySummary = discoverySummary,
-                content = contentStr,
-                lastError = if (contentStr.isBlank() && lastFailureReason != null) lastFailureReason else null
-            )
-        }
-
         for (server in selection.optionalServers) {
             AppLogger.i(TAG, "MCP optional fetch START server=${server.id} type=${server.type}")
             when (val result = mcpClient.fetchContext(server, userMessage)) {

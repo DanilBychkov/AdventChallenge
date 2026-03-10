@@ -34,10 +34,12 @@ results.
 - **Domain**: `McpServerConfig`, `McpHealthStatus`, `McpTransportType`, `McpRegistry` (interface).
 - **Application**: `McpRouter`, `McpSelectionResult`, `McpContextOrchestrator`, `McpEnrichedContext` (discovery +
   content), `McpDiscoveryResult` / `McpToolInfo` / `McpResourceInfo` / `McpPromptInfo`, `McpServerCapabilities`,
-  `Context7Relevance`, `McpClient` / `McpFetchResult` / `McpHealthResult`; use cases: `GetMcpServersUseCase`,
-  `UpdateMcpServerUseCase`, `CheckMcpHealthUseCase`.
-- **Infrastructure**: `DefaultMcpRegistry`, `FileMcpSettingsStorage`, `DefaultMcpRouter`, `StdioMcpClient` (discover:
-  tools/list + resources/list + prompts/list; fetchContext; checkHealth), wiring in `ServiceLocator`.
+  `McpRelevanceStrategy`, `McpRelevanceResult`, `McpRelevanceStrategyRegistry`, `Context7RelevanceStrategy`,
+  `FallbackRelevanceStrategy`, `Context7Relevance`, `McpClient` / `McpFetchResult` / `McpHealthResult`; use cases:
+  `GetMcpServersUseCase`, `UpdateMcpServerUseCase`, `CheckMcpHealthUseCase`.
+- **Infrastructure**: `DefaultMcpRegistry`, `DefaultMcpRelevanceStrategyRegistry`, `FileMcpSettingsStorage`,
+  `DefaultMcpRouter`, `StdioMcpClient` (discover: tools/list + resources/list + prompts/list; fetchContext;
+  checkHealth), wiring in `ServiceLocator`.
 - **Persistence**: `~/.bothubclient/mcp_servers.json`. Presets (e.g. Context7) are merged with saved overrides by id.
 - **Context7**: Uses the API search method (resolve-library-id → GET /api/v2/libs/search with libraryName + query
   per [API Guide](https://context7.com/docs/api-guide)), then get-library-docs for context. No LLM normalization; the
@@ -49,16 +51,23 @@ results.
 
 ## Routing and orchestration
 
-- See **MCP_ROUTING.md** for selection rules (enabled/disabled, force, priority).
-- `McpContextOrchestrator.fetchEnrichedContext`: selects servers → **discovers** each (tools/list, resources/list,
-  prompts/list) → builds discovery summary → **fetches** context from forced then optional servers → returns
-  `McpEnrichedContext`.
+- See **MCP_ROUTING.md** for selection rules (enabled/disabled, force, priority, **per-server relevance**).
+- The **router** filters optional servers using `McpRelevanceStrategyRegistry`: each optional server’s
+  `McpRelevanceStrategy` (by server type or id) decides whether the server is relevant for the user message; unknown
+  types use a fallback strategy (default: not relevant).
+- `McpContextOrchestrator.fetchEnrichedContext`: calls router → **discovers** each selected server → **fetches** context
+  from forced then optional servers (no extra relevance gate; orchestrator trusts router).
 
 ## Adding a new MCP server
 
 1. Add a preset in `config/McpPresets.kt` (or extend `getAllPresets()`).
-2. Ensure the server has a unique `id`, `command`/`args`/`env` for STDIO (or `url`/`headers` for HTTP when implemented).
-3. No code change is required in the router for “optional” usage; for server-specific relevance, extend the relevance logic (e.g. a new helper like `isContext7Relevant`).
+2. Ensure the server has a unique `id`, `type`, and `command`/`args`/`env` for STDIO (or `url`/`headers` for HTTP when
+   implemented).
+3. **Relevance (optional servers):** implement `McpRelevanceStrategy` for your server (e.g. keyword heuristic, API
+   check). Register it in the registry by **server type** or **server id**: in `ServiceLocator` the router uses
+   `DefaultMcpRelevanceStrategyRegistry.withDefaults()`; to add a new strategy, either extend `withDefaults()` (register
+   your strategy for your preset’s `type`) or build a custom registry and pass it to `DefaultMcpRouter`. See *
+   *MCP_ROUTING.md** for the strategy/fallback model.
 
 ## Healthcheck and logging
 
@@ -77,7 +86,8 @@ results.
 
 ## Tests
 
-- `DefaultMcpRouterTest`: forced/optional split, metadata, Context7 relevance in result.
-- `Context7RelevanceTest`: keyword-based relevance.
-- `McpContextOrchestratorTest`: orchestration with forced/optional and failure handling; result is
-  `McpEnrichedContext.content` / `.discoverySummary`.
+- `DefaultMcpRouterTest`: forced/optional split, optional filtered by per-server strategy, forced independent of
+  relevance, unknown type uses fallback, metadata (optionalPassed, optionalFiltered).
+- `Context7RelevanceTest`: keyword-based relevance for Context7.
+- `McpContextOrchestratorTest`: orchestration with forced/optional and failure handling; optional behavior driven by
+  router selection only; result is `McpEnrichedContext.content` / `.discoverySummary`.

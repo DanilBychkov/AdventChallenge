@@ -46,15 +46,16 @@ class McpContextOrchestratorTest {
     }
 
     @Test
-    fun `fetchEnrichedContext skips optional when context7 is not relevant`() = runTest {
+    fun `fetchEnrichedContext skips optional when router returns empty optionalServers`() = runTest {
+        // This test verifies that the orchestrator trusts the router's selection.
+        // The router (not the orchestrator) is responsible for filtering optional servers by relevance.
         val forced = server(id = "forced", type = "search", forceUsage = true)
-        val optional = server(id = "context7", type = "context7")
-
+        // Router returns empty optionalServers (e.g., because message is not relevant)
         val router =
             FakeMcpRouter(
                 McpSelectionResult(
                     forcedServers = listOf(forced),
-                    optionalServers = listOf(optional)
+                    optionalServers = emptyList()
                 )
             )
         val client =

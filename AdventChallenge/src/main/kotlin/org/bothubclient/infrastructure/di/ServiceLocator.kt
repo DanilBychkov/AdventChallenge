@@ -5,6 +5,7 @@ import io.ktor.client.engine.okhttp.*
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.serialization.kotlinx.json.*
 import kotlinx.serialization.json.Json
+import org.bothubclient.application.mcp.DefaultMcpRelevanceStrategyRegistry
 import org.bothubclient.application.mcp.DefaultMcpRouter
 import org.bothubclient.application.mcp.McpContextOrchestrator
 import org.bothubclient.application.usecase.*
@@ -21,8 +22,8 @@ import org.bothubclient.infrastructure.agent.StateMachineAwareAgent
 import org.bothubclient.infrastructure.api.BothubChatRepository
 import org.bothubclient.infrastructure.config.EnvironmentApiKeyProvider
 import org.bothubclient.infrastructure.context.*
-import org.bothubclient.infrastructure.memory.LtmRecaller
 import org.bothubclient.infrastructure.mcp.StdioMcpClient
+import org.bothubclient.infrastructure.memory.LtmRecaller
 import org.bothubclient.infrastructure.persistence.FileChatHistoryStorage
 import org.bothubclient.infrastructure.persistence.FileMcpSettingsStorage
 import org.bothubclient.infrastructure.persistence.FileTaskContextStorage
@@ -98,8 +99,12 @@ object ServiceLocator {
         StdioMcpClient()
     }
 
+    private val mcpRelevanceRegistry: DefaultMcpRelevanceStrategyRegistry by lazy {
+        DefaultMcpRelevanceStrategyRegistry.withDefaults()
+    }
+
     private val mcpRouter: DefaultMcpRouter by lazy {
-        DefaultMcpRouter(registry = mcpRegistry)
+        DefaultMcpRouter(registry = mcpRegistry, relevanceRegistry = mcpRelevanceRegistry)
     }
 
     private val mcpContextOrchestrator: McpContextOrchestrator by lazy {
