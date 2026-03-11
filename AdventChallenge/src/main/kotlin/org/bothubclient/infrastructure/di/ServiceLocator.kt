@@ -27,11 +27,12 @@ import org.bothubclient.infrastructure.mcp.Context7StdioFetchStrategy
 import org.bothubclient.infrastructure.mcp.DefaultStdioMcpFetchStrategy
 import org.bothubclient.infrastructure.mcp.StdioMcpClient
 import org.bothubclient.infrastructure.memory.LtmRecaller
-import org.bothubclient.infrastructure.persistence.FileChatHistoryStorage
-import org.bothubclient.infrastructure.persistence.FileMcpSettingsStorage
-import org.bothubclient.infrastructure.persistence.FileTaskContextStorage
-import org.bothubclient.infrastructure.persistence.UserProfileStorage
+import org.bothubclient.infrastructure.persistence.*
 import org.bothubclient.infrastructure.repository.DefaultMcpRegistry
+import org.bothubclient.infrastructure.scheduler.BackgroundJobManager
+import org.bothubclient.infrastructure.scheduler.HttpBoredClient
+import org.bothubclient.infrastructure.scheduler.LlmReportGenerator
+import org.bothubclient.infrastructure.scheduler.LlmScheduleIntentExtractor
 import org.bothubclient.infrastructure.repository.UserProfileRepository as InfraUserProfileRepository
 
 object ServiceLocator {
@@ -196,7 +197,71 @@ object ServiceLocator {
         )
     }
 
+    private val jsonBackgroundJobRepository: JsonBackgroundJobRepository by lazy {
+        JsonBackgroundJobRepository()
+    }
+
+    private val jsonBoredReportRepository: JsonBoredReportRepository by lazy {
+        JsonBoredReportRepository()
+    }
+
+    private val httpBoredClient: HttpBoredClient by lazy {
+        HttpBoredClient(client = httpClient)
+    }
+
+    private val llmReportGenerator: LlmReportGenerator by lazy {
+        LlmReportGenerator(client = httpClient, getApiKey = { apiKeyProvider.getApiKey() })
+    }
+
+    private val llmScheduleIntentExtractor: LlmScheduleIntentExtractor by lazy {
+        LlmScheduleIntentExtractor(client = httpClient, getApiKey = { apiKeyProvider.getApiKey() })
+    }
+
+    private val backgroundJobManagerScope: kotlinx.coroutines.CoroutineScope by lazy {
+        kotlinx.coroutines.CoroutineScope(
+            kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default
+        )
+    }
+
+    val backgroundJobManager: BackgroundJobManager by lazy {
+        BackgroundJobManager(
+            jobRepo = jsonBackgroundJobRepository,
+            reportRepo = jsonBoredReportRepository,
+            boredClient = httpBoredClient,
+            reportGenerator = llmReportGenerator,
+            scope = backgroundJobManagerScope
+        )
+    }
+
+    val configureBackgroundJobUseCase: ConfigureBackgroundJobUseCase by lazy {
+        ConfigureBackgroundJobUseCase(jsonBackgroundJobRepository)
+    }
+
+    val listBackgroundJobsUseCase: ListBackgroundJobsUseCase by lazy {
+        ListBackgroundJobsUseCase(jsonBackgroundJobRepository)
+    }
+
+    val toggleBackgroundJobUseCase: ToggleBackgroundJobUseCase by lazy {
+        ToggleBackgroundJobUseCase(jsonBackgroundJobRepository)
+    }
+
+    val runBackgroundJobNowUseCase: RunBackgroundJobNowUseCase by lazy {
+        RunBackgroundJobNowUseCase(
+            repository = jsonBackgroundJobRepository,
+            jobExecutor = { jobId -> backgroundJobManager.runJobNow(jobId) }
+        )
+    }
+
+    val listBoredReportsUseCase: ListBoredReportsUseCase by lazy {
+        ListBoredReportsUseCase(jsonBoredReportRepository)
+    }
+
+    val parseScheduleIntentUseCase: ParseScheduleIntentUseCase by lazy {
+        ParseScheduleIntentUseCase(llmExtractor = { msg -> llmScheduleIntentExtractor.extract(msg) })
+    }
+
     fun close() {
+        backgroundJobManager.stop()
         httpClient.close()
     }
 }

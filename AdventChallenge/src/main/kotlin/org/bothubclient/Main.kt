@@ -1,5 +1,6 @@
 package org.bothubclient
 
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
@@ -16,7 +17,8 @@ fun main() = application {
     )
 
     val coroutineScope = rememberCoroutineScope()
-    val viewModel = ChatViewModel.create()
+    val viewModel = remember { ChatViewModel.create() }
+    remember { ServiceLocator.backgroundJobManager.start(); true }
 
     Window(
         onCloseRequest = {

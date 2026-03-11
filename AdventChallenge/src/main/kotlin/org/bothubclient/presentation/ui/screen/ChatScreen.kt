@@ -36,6 +36,7 @@ fun ChatScreen(viewModel: ChatViewModel, coroutineScope: CoroutineScope) {
     val promptScrollState = rememberScrollState()
     var isProfileEditorOpen by rememberSaveable { mutableStateOf(false) }
     var isMcpSettingsOpen by rememberSaveable { mutableStateOf(false) }
+    var isResultsOpen by rememberSaveable { mutableStateOf(false) }
     val mcpSettingsViewModel = remember { McpSettingsViewModel.create() }
 
     var promptPanelHeight by remember {
@@ -86,6 +87,22 @@ fun ChatScreen(viewModel: ChatViewModel, coroutineScope: CoroutineScope) {
                     onClose = { isMcpSettingsOpen = false }
                 )
             }
+            if (isResultsOpen) {
+                ResultsDialog(
+                    jobs = viewModel.backgroundJobs,
+                    reports = viewModel.boredReports,
+                    onToggleJob = { jobId, enabled -> viewModel.toggleJob(coroutineScope, jobId, enabled) },
+                    onRunJobNow = { jobId -> viewModel.runJobNow(coroutineScope, jobId) },
+                    onUpdateInterval = { jobId, interval ->
+                        viewModel.updateJobInterval(
+                            coroutineScope,
+                            jobId,
+                            interval
+                        )
+                    },
+                    onClose = { isResultsOpen = false }
+                )
+            }
             Header(
                 title = "Bothub Chat Client",
                 showReset = viewModel.messages.isNotEmpty(),
@@ -100,7 +117,12 @@ fun ChatScreen(viewModel: ChatViewModel, coroutineScope: CoroutineScope) {
                     viewModel.onUserProfileSelected(coroutineScope, item.id)
                 },
                 onOpenProfile = { isProfileEditorOpen = true },
-                onOpenMcpSettings = { isMcpSettingsOpen = true }
+                onOpenMcpSettings = { isMcpSettingsOpen = true },
+                onOpenResults = {
+                    viewModel.loadBackgroundJobs(coroutineScope)
+                    viewModel.loadBoredReports(coroutineScope)
+                    isResultsOpen = true
+                }
             )
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -868,7 +890,8 @@ private fun Header(
     onProfileDropdownExpandedChange: (Boolean) -> Unit,
     onProfileSelected: (org.bothubclient.presentation.viewmodel.ProfileDropdownItem) -> Unit,
     onOpenProfile: () -> Unit,
-    onOpenMcpSettings: () -> Unit
+    onOpenMcpSettings: () -> Unit,
+    onOpenResults: () -> Unit = {}
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
@@ -896,6 +919,13 @@ private fun Header(
                 Icon(
                     imageVector = Icons.Default.Person,
                     contentDescription = "Открыть профиль",
+                    tint = MaterialTheme.colors.secondary
+                )
+            }
+            IconButton(onClick = onOpenResults) {
+                Icon(
+                    imageVector = Icons.Default.PlayArrow,
+                    contentDescription = "Результаты",
                     tint = MaterialTheme.colors.secondary
                 )
             }

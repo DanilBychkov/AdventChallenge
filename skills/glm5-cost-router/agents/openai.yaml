@@ -1,0 +1,3 @@
+interface:
+  display_name: "GLM5 Cost Router"
+  short_description: "Route coding tasks by cost and risk"

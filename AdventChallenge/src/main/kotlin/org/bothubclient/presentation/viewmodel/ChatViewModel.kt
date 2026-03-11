@@ -32,9 +32,24 @@ class ChatViewModel(
     private val getTokenStatisticsUseCase: GetTokenStatisticsUseCase,
     private val userProfileRepository: UserProfileRepository,
     private val logger: Logger = NoOpLogger,
-    private val agentIntrospection: ChatAgentIntrospection? = null
+    private val agentIntrospection: ChatAgentIntrospection? = null,
+    private val listBackgroundJobsUseCase: ListBackgroundJobsUseCase? = null,
+    private val listBoredReportsUseCase: ListBoredReportsUseCase? = null,
+    private val toggleBackgroundJobUseCase: ToggleBackgroundJobUseCase? = null,
+    private val runBackgroundJobNowUseCase: RunBackgroundJobNowUseCase? = null,
+    private val configureBackgroundJobUseCase: ConfigureBackgroundJobUseCase? = null,
+    private val parseScheduleIntentUseCase: ParseScheduleIntentUseCase? = null,
+    private val backgroundJobManager: org.bothubclient.infrastructure.scheduler.BackgroundJobManager? = null
 ) {
     private val memoryCommandParser = MemoryCommandParser()
+
+    init {
+        backgroundJobManager?.onReportGenerated = { report ->
+            messages = messages + Message.system(
+                "Фоновый отчёт: ${report.llmSummary}"
+            )
+        }
+    }
 
     private fun log(message: String) = logger.log("ChatViewModel", message)
 
@@ -164,6 +179,46 @@ class ChatViewModel(
 
     var branchCheckpointSize by mutableStateOf(0)
         private set
+
+    var backgroundJobs by mutableStateOf<List<org.bothubclient.domain.entity.BackgroundJob>>(emptyList())
+        private set
+
+    var boredReports by mutableStateOf<List<org.bothubclient.domain.entity.BoredReportItem>>(emptyList())
+        private set
+
+    fun loadBackgroundJobs(scope: CoroutineScope) {
+        scope.launch {
+            backgroundJobs = listBackgroundJobsUseCase?.invoke() ?: emptyList()
+        }
+    }
+
+    fun loadBoredReports(scope: CoroutineScope) {
+        scope.launch {
+            boredReports = listBoredReportsUseCase?.invoke() ?: emptyList()
+        }
+    }
+
+    fun toggleJob(scope: CoroutineScope, jobId: String, enabled: Boolean) {
+        scope.launch {
+            toggleBackgroundJobUseCase?.invoke(jobId, enabled)
+            loadBackgroundJobs(scope)
+        }
+    }
+
+    fun runJobNow(scope: CoroutineScope, jobId: String) {
+        scope.launch {
+            runBackgroundJobNowUseCase?.invoke(jobId)
+            loadBackgroundJobs(scope)
+            loadBoredReports(scope)
+        }
+    }
+
+    fun updateJobInterval(scope: CoroutineScope, jobId: String, intervalMinutes: Int) {
+        scope.launch {
+            configureBackgroundJobUseCase?.invoke(intervalMinutes = intervalMinutes)
+            loadBackgroundJobs(scope)
+        }
+    }
 
     fun loadHistory(scope: CoroutineScope) {
         if (isHistoryLoaded) return
@@ -847,6 +902,34 @@ class ChatViewModel(
                 return@launch
             }
 
+            if (parseScheduleIntentUseCase != null && configureBackgroundJobUseCase != null) {
+                val intent = runCatching { parseScheduleIntentUseCase.invoke(userMessage) }.getOrNull()
+                if (intent != null && intent.intent == ScheduleIntent.SCHEDULE_BORED_REPORT && intent.confidence >= 0.75) {
+                    val job = runCatching {
+                        configureBackgroundJobUseCase.invoke(
+                            intervalMinutes = intent.intervalMinutes ?: 5,
+                            enabled = intent.enabled ?: true
+                        )
+                    }.getOrNull()
+                    if (job != null) {
+                        val intervalText = when (job.intervalMinutes) {
+                            1 -> "каждую минуту"
+                            60 -> "каждый час"
+                            else -> "каждые ${job.intervalMinutes} мин."
+                        }
+                        messages = messages + Message.assistant(
+                            "Готово! Настроена фоновая задача: $intervalText буду присылать рекомендации чем заняться. " +
+                                    "Первый отчёт появится через ${job.intervalMinutes} мин. " +
+                                    "Управлять задачей можно через кнопку ▶ в шапке."
+                        )
+                        loadBackgroundJobs(scope)
+                        statusMessage = "Готов к работе"
+                        isLoading = false
+                        return@launch
+                    }
+                }
+            }
+
             val result =
                 sendMessageUseCase(userMessage, selectedModel, effectivePromptText, temperature)
 
@@ -950,7 +1033,21 @@ class ChatViewModel(
                         }
                     },
                 agentIntrospection =
-                    org.bothubclient.infrastructure.di.ServiceLocator.compressingChatAgent
+                    org.bothubclient.infrastructure.di.ServiceLocator.compressingChatAgent,
+                listBackgroundJobsUseCase =
+                    org.bothubclient.infrastructure.di.ServiceLocator.listBackgroundJobsUseCase,
+                listBoredReportsUseCase =
+                    org.bothubclient.infrastructure.di.ServiceLocator.listBoredReportsUseCase,
+                toggleBackgroundJobUseCase =
+                    org.bothubclient.infrastructure.di.ServiceLocator.toggleBackgroundJobUseCase,
+                runBackgroundJobNowUseCase =
+                    org.bothubclient.infrastructure.di.ServiceLocator.runBackgroundJobNowUseCase,
+                configureBackgroundJobUseCase =
+                    org.bothubclient.infrastructure.di.ServiceLocator.configureBackgroundJobUseCase,
+                parseScheduleIntentUseCase =
+                    org.bothubclient.infrastructure.di.ServiceLocator.parseScheduleIntentUseCase,
+                backgroundJobManager =
+                    org.bothubclient.infrastructure.di.ServiceLocator.backgroundJobManager
             )
         }
     }
