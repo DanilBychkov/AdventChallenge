@@ -5,6 +5,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import org.bothubclient.infrastructure.agent.CompressingChatAgent
+import org.bothubclient.infrastructure.agent.McpToolCallEvent
 import org.bothubclient.application.usecase.*
 import org.bothubclient.config.ModelPricing
 import org.bothubclient.config.SystemPrompt
@@ -39,7 +41,8 @@ class ChatViewModel(
     private val runBackgroundJobNowUseCase: RunBackgroundJobNowUseCase? = null,
     private val configureBackgroundJobUseCase: ConfigureBackgroundJobUseCase? = null,
     private val parseScheduleIntentUseCase: ParseScheduleIntentUseCase? = null,
-    private val backgroundJobManager: org.bothubclient.infrastructure.scheduler.BackgroundJobManager? = null
+    private val backgroundJobManager: org.bothubclient.infrastructure.scheduler.BackgroundJobManager? = null,
+    private val compressingChatAgent: CompressingChatAgent? = null
 ) {
     private val memoryCommandParser = MemoryCommandParser()
 
@@ -49,6 +52,33 @@ class ChatViewModel(
                 "Фоновый отчёт: ${report.llmSummary}"
             )
         }
+    }
+
+    fun collectToolCallEvents(scope: CoroutineScope) {
+        val agent = compressingChatAgent ?: return
+        scope.launch {
+            agent.toolCallEvents.collect { event ->
+                handleToolCallEvent(event)
+            }
+        }
+    }
+
+    private fun handleToolCallEvent(event: McpToolCallEvent) {
+        val displayContent = if (event.result.length > 500)
+            event.result.take(500) + "..." else event.result
+        val info = McpToolCallInfo(
+            toolName = event.toolName,
+            serverName = event.serverName,
+            arguments = event.arguments,
+            durationMs = event.durationMs,
+            isError = event.isError
+        )
+        messages = messages + Message.mcpToolCall(
+            serverName = event.serverName,
+            toolName = event.toolName,
+            content = displayContent,
+            info = info
+        )
     }
 
     private fun log(message: String) = logger.log("ChatViewModel", message)
@@ -1047,7 +1077,9 @@ class ChatViewModel(
                 parseScheduleIntentUseCase =
                     org.bothubclient.infrastructure.di.ServiceLocator.parseScheduleIntentUseCase,
                 backgroundJobManager =
-                    org.bothubclient.infrastructure.di.ServiceLocator.backgroundJobManager
+                    org.bothubclient.infrastructure.di.ServiceLocator.backgroundJobManager,
+                compressingChatAgent =
+                    org.bothubclient.infrastructure.di.ServiceLocator.compressingChatAgent
             )
         }
     }

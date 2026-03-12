@@ -1,0 +1,19 @@
+{
+  "name": "search-mcp",
+  "type": "module",
+  "version": "1.0.0",
+  "description": "MCP server: search Wikipedia for information on a topic",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "test": "node --test __tests__/search.test.js"
+  },
+  "dependencies": {
+    "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.9.3"
+  }
+}

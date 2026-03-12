@@ -1,5 +1,6 @@
 package org.bothubclient.application.mcp
 
+import kotlinx.serialization.json.JsonObject
 import org.bothubclient.domain.entity.McpServerConfig
 
 /** Result of MCP discovery: tools, resources, and prompts the server exposes (aligned with MCP spec). */
@@ -16,7 +17,8 @@ data class McpDiscoveryResult(
 data class McpToolInfo(
     val name: String,
     val description: String?,
-    val inputSchemaSummary: String?
+    val inputSchemaSummary: String?,
+    val inputSchema: JsonObject? = null
 )
 
 /** One MCP resource: URI and metadata (data the agent can read). */

@@ -37,6 +37,9 @@ dependencies {
     // Coroutines testing
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.0")
 
+    // Ktor Mock Engine for tests
+    testImplementation("io.ktor:ktor-client-mock:$ktorVersion")
+
     // Compose UI Testing
     testImplementation(compose.desktop.uiTestJUnit4)
 }

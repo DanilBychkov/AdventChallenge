@@ -11,9 +11,7 @@ import org.bothubclient.config.ModelContextLimits
 import org.bothubclient.config.ModelPricing
 import org.bothubclient.domain.agent.ChatAgent
 import org.bothubclient.domain.entity.*
-import org.bothubclient.infrastructure.api.ApiChatMessage
-import org.bothubclient.infrastructure.api.ApiChatRequest
-import org.bothubclient.infrastructure.api.ApiChatResponse
+import org.bothubclient.infrastructure.api.*
 import org.bothubclient.infrastructure.logging.AppLogger
 import org.bothubclient.infrastructure.logging.FileLogger
 import java.util.concurrent.ConcurrentHashMap
@@ -89,6 +87,27 @@ class BothubChatAgent(
     companion object {
         private const val TAG = "BothubChatAgent"
         private const val CONTEXT_LENGTH_EXCEEDED = "context_length_exceeded"
+
+        private val TOOL_CALL_REGEX = Regex(
+            """\[TOOL_CALL]\s*\n?\s*(\{.*?})\s*\n?\s*\[/TOOL_CALL]""",
+            setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)
+        )
+
+        fun parseTextToolCall(content: String): Pair<String, String>? {
+            val match = TOOL_CALL_REGEX.find(content) ?: return null
+            val jsonStr = match.groupValues[1].trim()
+            return try {
+                val parsed = kotlinx.serialization.json.Json.parseToJsonElement(jsonStr)
+                val obj = parsed as? kotlinx.serialization.json.JsonObject ?: return null
+                val nameElement = obj["name"] as? kotlinx.serialization.json.JsonPrimitive ?: return null
+                val name = nameElement.content
+                if (name.isBlank()) return null
+                val args = obj["arguments"]?.toString() ?: "{}"
+                Pair(name, args)
+            } catch (_: Exception) {
+                null
+            }
+        }
     }
 
     override suspend fun reset(sessionId: String) {
@@ -263,6 +282,174 @@ class BothubChatAgent(
         }
     }
 
+    override suspend fun sendWithTools(
+        sessionId: String,
+        contextMessages: List<Message>,
+        userMessage: String,
+        model: String,
+        systemPrompt: String,
+        temperature: Double,
+        tools: List<ApiToolDefinition>,
+        toolExecutor: suspend (toolName: String, arguments: String) -> String,
+        onToolCall: suspend (toolName: String, arguments: String, result: String, durationMs: Long) -> Unit
+    ): ChatResult {
+        if (tools.isEmpty()) {
+            return sendWithContext(sessionId, contextMessages, userMessage, model, systemPrompt, temperature)
+        }
+
+        val apiKey = getApiKey()
+        val trimmedUrl = ApiConfig.BASE_URL.trim().trimEnd(',', ' ')
+        val maxIterations = 10
+        var totalPromptTokens = 0
+        var totalCompletionTokens = 0
+        var totalTokensAll = 0
+        var totalTimeMs = 0L
+        var useNativeTools = true
+
+        val conversationMessages = buildList<ApiChatMessage> {
+            add(ApiChatMessage(role = "system", content = systemPrompt))
+            contextMessages.forEach { message ->
+                val role = when (message.role) {
+                    MessageRole.USER -> "user"
+                    MessageRole.ASSISTANT -> "assistant"
+                    else -> null
+                }
+                if (role != null) {
+                    add(ApiChatMessage(role = role, content = message.content))
+                }
+            }
+            add(ApiChatMessage(role = "user", content = userMessage))
+        }.toMutableList()
+
+        for (iteration in 0 until maxIterations) {
+            val request = ApiChatRequest(
+                model = model,
+                messages = conversationMessages.toList(),
+                max_tokens = ApiConfig.TOOL_CALLING_MAX_TOKENS,
+                temperature = temperature,
+                tools = if (useNativeTools) tools else null
+            )
+
+            val chatResponse: ApiChatResponse
+            val iterTimeMs = measureTimeMillis {
+                val response: HttpResponse = client.post(trimmedUrl) {
+                    headers {
+                        append(HttpHeaders.Authorization, "Bearer $apiKey")
+                        append(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+                        append(HttpHeaders.Accept, ContentType.Application.Json.toString())
+                    }
+                    timeout {
+                        requestTimeoutMillis = 600_000
+                        socketTimeoutMillis = 600_000
+                    }
+                    setBody(request)
+                }
+
+                if (!response.status.isSuccess()) {
+                    val errorBody = response.bodyAsText()
+                    return ChatResult.Error(Exception("HTTP error ${response.status}: $errorBody"))
+                }
+
+                chatResponse = response.body()
+            }
+
+            totalTimeMs += iterTimeMs
+            totalPromptTokens += chatResponse.usage?.prompt_tokens ?: 0
+            totalCompletionTokens += chatResponse.usage?.completion_tokens ?: 0
+            totalTokensAll += chatResponse.usage?.total_tokens ?: 0
+
+            if (chatResponse.error != null) {
+                return ChatResult.Error(Exception("API error: ${chatResponse.error.message}"))
+            }
+
+            val choice = chatResponse.choices?.firstOrNull()
+                ?: return ChatResult.Error(Exception("No choices in API response"))
+
+            val nativeToolCalls = choice.message?.tool_calls
+            val content = choice.message?.content ?: ""
+
+            if (!nativeToolCalls.isNullOrEmpty()) {
+                conversationMessages.add(
+                    ApiChatMessage(
+                        role = "assistant",
+                        content = choice.message?.content,
+                        tool_calls = nativeToolCalls
+                    )
+                )
+                for (tc in nativeToolCalls) {
+                    val toolName = tc.function.name
+                    val toolArgs = tc.function.arguments
+                    var toolResult: String
+                    val callTimeMs = measureTimeMillis {
+                        toolResult = try {
+                            toolExecutor(toolName, toolArgs)
+                        } catch (e: Exception) {
+                            "Error executing tool '$toolName': ${e.message}"
+                        }
+                    }
+                    onToolCall(toolName, toolArgs, toolResult, callTimeMs)
+                    conversationMessages.add(
+                        ApiChatMessage(
+                            role = "tool",
+                            content = toolResult,
+                            tool_call_id = tc.id,
+                            name = toolName
+                        )
+                    )
+                }
+                continue
+            }
+
+            val textToolCall = parseTextToolCall(content)
+            if (textToolCall != null) {
+                useNativeTools = false
+                conversationMessages.add(ApiChatMessage(role = "assistant", content = content))
+
+                val toolName = textToolCall.first
+                val toolArgs = textToolCall.second
+                var toolResult: String
+                val callTimeMs = measureTimeMillis {
+                    toolResult = try {
+                        toolExecutor(toolName, toolArgs)
+                    } catch (e: Exception) {
+                        "Error executing tool '$toolName': ${e.message}"
+                    }
+                }
+                onToolCall(toolName, toolArgs, toolResult, callTimeMs)
+
+                conversationMessages.add(
+                    ApiChatMessage(
+                        role = "user",
+                        content = "[TOOL_RESULT name=\"$toolName\"]\n$toolResult\n[/TOOL_RESULT]\nИспользуй этот результат. Если нужен следующий инструмент — вызови его через [TOOL_CALL]. Если все шаги выполнены — дай финальный ответ пользователю без тегов [TOOL_CALL]."
+                    )
+                )
+                continue
+            }
+
+            val cleanContent = content.ifBlank { "No response from model" }
+            updateTokenAccumulator(sessionId, totalPromptTokens, totalCompletionTokens, totalTokensAll)
+            val metrics = RequestMetrics(
+                promptTokens = totalPromptTokens,
+                completionTokens = totalCompletionTokens,
+                totalTokens = totalTokensAll,
+                responseTimeMs = totalTimeMs
+            )
+            return ChatResult.Success(Message.assistant(cleanContent), metrics)
+        }
+
+        updateTokenAccumulator(sessionId, totalPromptTokens, totalCompletionTokens, totalTokensAll)
+        val metrics = RequestMetrics(
+            promptTokens = totalPromptTokens,
+            completionTokens = totalCompletionTokens,
+            totalTokens = totalTokensAll,
+            responseTimeMs = totalTimeMs
+        )
+        return ChatResult.Success(
+            Message.assistant("Tool calling reached maximum iterations ($maxIterations)."),
+            metrics
+        )
+    }
+
     private suspend fun sendInternal(
         sessionId: String,
         pastMessages: List<Message>,
@@ -304,17 +491,17 @@ class BothubChatAgent(
         FileLogger.section("API REQUEST")
         FileLogger.log(TAG, "Messages count: ${apiMessages.size}")
         apiMessages.forEachIndexed { index, msg ->
-            val preview =
-                if (msg.content.length > 100) msg.content.take(100) + "..." else msg.content
+            val c = msg.content.orEmpty()
+            val preview = if (c.length > 100) c.take(100) + "..." else c
             FileLogger.log(TAG, "  [$index] ${msg.role}: $preview")
         }
-        if (apiMessages.any { it.role == "system" && it.content.contains("ПРЕДЫДУЩИЙ КОНТЕКСТ") }) {
+        if (apiMessages.any { it.role == "system" && it.content.orEmpty().contains("ПРЕДЫДУЩИЙ КОНТЕКСТ") }) {
             FileLogger.log(TAG, "*** CONTEXT SUMMARY IS INCLUDED IN SYSTEM PROMPT ***")
         }
-        if (apiMessages.any { it.role == "system" && it.content.contains("[FACTS]") }) {
+        if (apiMessages.any { it.role == "system" && it.content.orEmpty().contains("[FACTS]") }) {
             FileLogger.log(TAG, "*** FACTS MEMORY IS INCLUDED IN SYSTEM PROMPT ***")
         }
-        if (apiMessages.any { it.role == "system" && it.content.contains("--- MCP context ---") }) {
+        if (apiMessages.any { it.role == "system" && it.content.orEmpty().contains("--- MCP context ---") }) {
             FileLogger.log(TAG, "*** MCP CONTEXT IS INCLUDED IN SYSTEM PROMPT ***")
         } else if (apiMessages.any { it.role == "system" }) {
             FileLogger.log(TAG, "*** MCP CONTEXT NOT FOUND IN SYSTEM PROMPT ***")

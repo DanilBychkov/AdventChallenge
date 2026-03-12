@@ -78,7 +78,70 @@ object McpPresets {
         workingDirectory = "mcp-servers/bored-api-mcp"
     )
 
-    fun getAllPresets(): List<McpServerConfig> = listOf(CONTEXT7_PRESET, BORED_API_PRESET)
+    val SEARCH_MCP_PRESET = McpServerConfig(
+        id = "search-mcp",
+        name = "Search MCP",
+        type = "search-mcp",
+        description = "Search Wikipedia for information on any topic",
+        enabled = true,
+        forceUsage = false,
+        transportType = McpTransportType.STDIO,
+        command = "node",
+        args = listOf("dist/index.js"),
+        env = null,
+        url = null,
+        headers = null,
+        capabilities = null,
+        priority = 50,
+        healthStatus = McpHealthStatus.UNKNOWN,
+        lastHealthCheckAt = null,
+        workingDirectory = "mcp-servers/search-mcp"
+    )
+
+    val SUMMARIZE_MCP_PRESET = McpServerConfig(
+        id = "summarize-mcp",
+        name = "Summarize MCP",
+        type = "summarize-mcp",
+        description = "Summarize text by extracting key sentences",
+        enabled = true,
+        forceUsage = false,
+        transportType = McpTransportType.STDIO,
+        command = "node",
+        args = listOf("dist/index.js"),
+        env = null,
+        url = null,
+        headers = null,
+        capabilities = null,
+        priority = 50,
+        healthStatus = McpHealthStatus.UNKNOWN,
+        lastHealthCheckAt = null,
+        workingDirectory = "mcp-servers/summarize-mcp"
+    )
+
+    val SAVE_MCP_PRESET = McpServerConfig(
+        id = "save-mcp",
+        name = "Save MCP",
+        type = "save-mcp",
+        description = "Save text content to a local file",
+        enabled = true,
+        forceUsage = false,
+        transportType = McpTransportType.STDIO,
+        command = "node",
+        args = listOf("dist/index.js"),
+        env = null,
+        url = null,
+        headers = null,
+        capabilities = null,
+        priority = 50,
+        healthStatus = McpHealthStatus.UNKNOWN,
+        lastHealthCheckAt = null,
+        workingDirectory = "mcp-servers/save-mcp"
+    )
+
+    fun getAllPresets(): List<McpServerConfig> = listOf(
+        CONTEXT7_PRESET, BORED_API_PRESET,
+        SEARCH_MCP_PRESET, SUMMARIZE_MCP_PRESET, SAVE_MCP_PRESET
+    )
 
     fun getPresetById(id: String): McpServerConfig? = getAllPresets().find { it.id == id }
 }

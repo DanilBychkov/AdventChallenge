@@ -141,7 +141,9 @@ object ServiceLocator {
             userProfileRepository = infraUserProfileRepository,
             taskContextStorage = taskContextStorage,
             chatHistoryStorage = chatHistoryStorage,
-            mcpContextOrchestrator = mcpContextOrchestrator
+            mcpContextOrchestrator = mcpContextOrchestrator,
+            mcpClient = mcpClient,
+            mcpRegistry = mcpRegistry
         )
     }
 

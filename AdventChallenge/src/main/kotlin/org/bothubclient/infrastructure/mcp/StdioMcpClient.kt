@@ -78,7 +78,8 @@ class StdioMcpClient(
         return McpToolInfo(
             name = name,
             description = description?.takeIf { it.isNotBlank() },
-            inputSchemaSummary = schemaSummary.takeIf { it.isNotBlank() }
+            inputSchemaSummary = schemaSummary.takeIf { it.isNotBlank() },
+            inputSchema = schema
         )
     }
 
@@ -330,7 +331,7 @@ class StdioMcpClient(
 
         AppLogger.w(TAG, "[MCP] callToolsForQuery FAIL no tool returned usable content")
         return McpFetchResult.Failure("MCP server returned no usable content for query")
-    }
+    }
 
     private fun extractTools(response: JsonObject): List<JsonObject> {
         val tools = response["result"]
@@ -388,6 +389,38 @@ class StdioMcpClient(
                 }
                 element.values.joinToString("\n") { extractTextFromJson(it) }.trim()
             }
+        }
+    }
+
+    suspend fun callTool(
+        server: McpServerConfig,
+        toolName: String,
+        arguments: JsonObject
+    ): McpFetchResult {
+        if (server.transportType != McpTransportType.STDIO) {
+            return McpFetchResult.Failure("HTTP transport is not supported for callTool")
+        }
+        return try {
+            withContext(Dispatchers.IO) {
+                runMcpSession(server = server, timeoutMs = FETCH_TIMEOUT_MS) { session ->
+                    val response = session.request(
+                        method = "tools/call",
+                        params = buildJsonObject {
+                            put("name", toolName)
+                            put("arguments", arguments)
+                        }
+                    )
+                    val content = extractContent(response)
+                    if (content.isBlank()) {
+                        McpFetchResult.Failure("MCP tool '$toolName' returned empty content")
+                    } else {
+                        McpFetchResult.Success(content)
+                    }
+                }
+            }
+        } catch (t: Throwable) {
+            logger.log(TAG, "callTool server=${server.id} tool=$toolName failed: ${t.message}")
+            McpFetchResult.Failure("callTool failed: ${t.message ?: "unknown"}", t)
         }
     }
 

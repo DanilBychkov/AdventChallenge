@@ -3,7 +3,9 @@ package org.bothubclient.infrastructure.agent
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.serialization.json.*
 import org.bothubclient.application.mcp.McpContextOrchestrator
+import org.bothubclient.application.mcp.McpToolInfo
 import org.bothubclient.domain.agent.ChatAgent
 import org.bothubclient.domain.agent.ChatAgentIntrospection
 import org.bothubclient.domain.context.ContextComposer
@@ -15,17 +17,22 @@ import org.bothubclient.domain.logging.Logger
 import org.bothubclient.domain.memory.LongTermMemoryStore
 import org.bothubclient.domain.memory.MemoryItem
 import org.bothubclient.domain.repository.ChatHistoryStorage
+import org.bothubclient.domain.repository.McpRegistry
 import org.bothubclient.domain.repository.TaskContextStorage
 import org.bothubclient.domain.statemachine.TaskStateMachine
 import org.bothubclient.domain.usecase.UserProfilePromptBuilder
+import org.bothubclient.infrastructure.api.ApiFunctionDef
+import org.bothubclient.infrastructure.api.ApiToolDefinition
 import org.bothubclient.infrastructure.context.HeuristicFactsExtractor
 import org.bothubclient.infrastructure.logging.AppLogger
 import org.bothubclient.infrastructure.logging.FileLogger
+import org.bothubclient.infrastructure.mcp.StdioMcpClient
 import org.bothubclient.infrastructure.memory.FileLongTermMemoryStore
 import org.bothubclient.infrastructure.memory.LtmRecaller
 import org.bothubclient.infrastructure.persistence.FileChatHistoryStorage
 import org.bothubclient.infrastructure.persistence.FileTaskContextStorage
 import org.bothubclient.infrastructure.repository.UserProfileRepository
+import org.bothubclient.application.mcp.McpFetchResult
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
@@ -35,6 +42,16 @@ sealed class CompressionEvent {
     data class Error(val exception: Exception) : CompressionEvent()
     object NotNeeded : CompressionEvent()
 }
+
+data class McpToolCallEvent(
+    val serverId: String,
+    val serverName: String,
+    val toolName: String,
+    val arguments: String,
+    val result: String,
+    val durationMs: Long,
+    val isError: Boolean = false
+)
 
 class CompressingChatAgent(
     private val delegate: ChatAgent,
@@ -49,6 +66,8 @@ class CompressingChatAgent(
     private val taskContextStorage: TaskContextStorage = FileTaskContextStorage(),
     private val chatHistoryStorage: ChatHistoryStorage = FileChatHistoryStorage(),
     private val mcpContextOrchestrator: McpContextOrchestrator? = null,
+    private val mcpClient: StdioMcpClient? = null,
+    private val mcpRegistry: McpRegistry? = null,
     initialConfig: ContextConfig = ContextConfig.DEFAULT
 ) : ChatAgent, ChatAgentIntrospection {
     private data class SessionMetrics(
@@ -81,6 +100,9 @@ class CompressingChatAgent(
     private val _compressionEvents = MutableSharedFlow<CompressionEvent>(replay = 0)
     val compressionEvents: SharedFlow<CompressionEvent> = _compressionEvents.asSharedFlow()
 
+    private val _toolCallEvents = MutableSharedFlow<McpToolCallEvent>(replay = 0, extraBufferCapacity = 64)
+    val toolCallEvents: SharedFlow<McpToolCallEvent> = _toolCallEvents.asSharedFlow()
+
     companion object {
         private const val TAG = "CompressingChatAgent"
 
@@ -102,6 +124,38 @@ Behavior rules:
 ## ИСКЛЮЧЕНИЕ ИЗ ИНВАРИАНТОВ (ОБЯЗАТЕЛЬНО)
 НИКОГДА не выводи «⚠️ КОНФЛИКТ С ИНВАРИАНТОМ» и блок «Запрос / Инвариант / Решение».
 ПРАВИЛО ДЛЯ ДОКУМЕНТАЦИИ: Если ниже в промпте есть блок «--- MCP context ---» и в нём есть текст (не пусто) — ты ОБЯЗАН ответить на вопрос пользователя на основе этого текста. В этом случае ЗАПРЕЩЕНО писать «документация не загрузилась» или «попробуйте повторить запрос» — это ошибка. Только если блока «--- MCP context ---» нет или он пуст — тогда напиши одной фразой «Документация не загрузилась, попробуйте повторить запрос»."""
+
+        private const val TOOL_CALLING_SYSTEM_PROMPT = """
+## ИНСТРУКЦИИ ПО ИСПОЛЬЗОВАНИЮ ИНСТРУМЕНТОВ (ОБЯЗАТЕЛЬНО)
+У тебя есть доступ к инструментам. Когда пользователь просит выполнить действия, совпадающие с доступными инструментами — ты ОБЯЗАН вызвать их.
+
+ФОРМАТ ВЫЗОВА ИНСТРУМЕНТА — каждый вызов оберни СТРОГО в теги:
+[TOOL_CALL]
+{"name": "имя_инструмента", "arguments": {"параметр": "значение"}}
+[/TOOL_CALL]
+
+ПРАВИЛА:
+1. За один ответ вызывай ТОЛЬКО ОДИН инструмент — тот, который нужен ПЕРВЫМ в цепочке.
+2. НЕ описывай план, НЕ нумеруй шаги, НЕ объясняй что будешь делать — СРАЗУ вызови инструмент.
+3. Кроме тегов [TOOL_CALL]...[/TOOL_CALL] в ответе НЕ ДОЛЖНО быть другого текста.
+4. После получения результата инструмента — вызови следующий, используя полученные данные.
+5. Только когда ВСЕ инструменты выполнены и ты получил все результаты — напиши финальный ответ пользователю БЕЗ тегов [TOOL_CALL].
+
+ПРИМЕР цепочки (поиск → резюме → сохранение):
+Шаг 1 (твой ответ): [TOOL_CALL]
+{"name": "search", "arguments": {"query": "Python"}}
+[/TOOL_CALL]
+Шаг 2 (после получения результата поиска): [TOOL_CALL]
+{"name": "summarize", "arguments": {"text": "текст из результата поиска"}}
+[/TOOL_CALL]
+Шаг 3 (после получения резюме): [TOOL_CALL]
+{"name": "save-to-file", "arguments": {"content": "текст резюме", "filename": "result.txt"}}
+[/TOOL_CALL]
+Шаг 4 (после сохранения): Готово! Информация найдена, резюмирована и сохранена в файл result.txt.
+
+ЗАПРЕЩЕНО: отвечать «документация не загрузилась», писать tool_code, описывать план без вызова.
+НИКОГДА не выводи «⚠️ КОНФЛИКТ С ИНВАРИАНТОМ»."""
+
         private const val MAX_SESSIONS = 64
         private const val SESSION_TTL_MS = 7L * 24 * 60 * 60 * 1000
         private const val PROTECTED_SESSION_ID = "chat-ui"
@@ -436,9 +490,27 @@ Behavior rules:
                 }
             log("MCP enriched hasContent=${enriched?.hasContent} hasDiscovery=${enriched?.hasDiscovery} lastError=${enriched?.lastError} mcpFetchError=$mcpFetchError")
 
+            val toolDefinitions = discoverToolDefinitions()
+            val toolServerMap = toolDefinitions.second
+            val apiTools = toolDefinitions.first
+            val hasActiveTools = apiTools.isNotEmpty() && mcpClient != null
+            log("Early tool discovery: ${apiTools.size} tools, hasActiveTools=$hasActiveTools")
+
             if (orchestrator != null) {
-                systemPromptWithProfile =
-                    systemPromptWithProfile + "\n\n" + MCP_INVARIANT_EXCEPTION.trim() + "\n\n" + MCP_BEHAVIOR_RULES.trim()
+                if (hasActiveTools) {
+                    val toolDescriptions = buildString {
+                        append("## ДОСТУПНЫЕ ИНСТРУМЕНТЫ:\n")
+                        for (tool in apiTools) {
+                            append("- **${tool.function.name}**: ${tool.function.description}\n")
+                            append("  Параметры: ${tool.function.parameters}\n")
+                        }
+                    }
+                    systemPromptWithProfile =
+                        systemPromptWithProfile + "\n\n" + toolDescriptions + "\n" + TOOL_CALLING_SYSTEM_PROMPT.trim()
+                } else {
+                    systemPromptWithProfile =
+                        systemPromptWithProfile + "\n\n" + MCP_INVARIANT_EXCEPTION.trim() + "\n\n" + MCP_BEHAVIOR_RULES.trim()
+                }
                 if (enriched != null) {
                     if (enriched.hasDiscovery) {
                         systemPromptWithProfile =
@@ -679,7 +751,37 @@ Behavior rules:
                     userMessage
                 }
 
-            val result =
+            val result = if (hasActiveTools) {
+                log("Tool calling enabled: ${apiTools.size} tools from ${toolServerMap.size} servers")
+                delegate.sendWithTools(
+                    sessionId = sessionId,
+                    contextMessages = composedContext.recentMessages,
+                    userMessage = userMessageForApi,
+                    model = model,
+                    systemPrompt = enhancedSystemPrompt,
+                    temperature = temperature,
+                    tools = apiTools,
+                    toolExecutor = { toolName, arguments ->
+                        executeToolCall(toolName, arguments, toolServerMap)
+                    },
+                    onToolCall = { toolName, arguments, toolResult, durationMs ->
+                        val serverInfo = toolServerMap[toolName]
+                        val isError = toolResult.startsWith("Error executing tool") ||
+                                toolResult.startsWith("callTool failed")
+                        _toolCallEvents.emit(
+                            McpToolCallEvent(
+                                serverId = serverInfo?.first?.id ?: "unknown",
+                                serverName = serverInfo?.first?.name ?: "Unknown",
+                                toolName = toolName,
+                                arguments = arguments,
+                                result = toolResult,
+                                durationMs = durationMs,
+                                isError = isError
+                            )
+                        )
+                    }
+                )
+            } else {
                 delegate.sendWithContext(
                     sessionId = sessionId,
                     contextMessages = composedContext.recentMessages,
@@ -688,6 +790,7 @@ Behavior rules:
                     systemPrompt = enhancedSystemPrompt,
                     temperature = temperature
                 )
+            }
 
             val resultWithMcpError: ChatResult =
                 if (result is ChatResult.Success) {
@@ -1427,5 +1530,76 @@ Behavior rules:
             if (group.isEmpty()) groups.remove(cat)
         }
         return removed
+    }
+
+    private suspend fun discoverToolDefinitions(): Pair<List<ApiToolDefinition>, Map<String, Pair<McpServerConfig, McpToolInfo>>> {
+        val registry = mcpRegistry ?: return Pair(emptyList(), emptyMap())
+        val client = mcpClient ?: return Pair(emptyList(), emptyMap())
+
+        val enabledServers = try {
+            registry.getEnabled()
+        } catch (e: Exception) {
+            log("Failed to get enabled MCP servers: ${e.message}")
+            return Pair(emptyList(), emptyMap())
+        }
+
+        val apiTools = mutableListOf<ApiToolDefinition>()
+        val toolServerMap = mutableMapOf<String, Pair<McpServerConfig, McpToolInfo>>()
+
+        for (server in enabledServers) {
+            val discovery = try {
+                client.discover(server) ?: continue
+            } catch (e: Exception) {
+                log("Tool discovery failed for ${server.id}: ${e.message}")
+                continue
+            }
+
+            for (tool in discovery.tools) {
+                val params = tool.inputSchema ?: buildJsonObject {
+                    put("type", "object")
+                    putJsonObject("properties") {
+                        tool.inputSchemaSummary?.split(", ")?.filter { it.isNotBlank() }?.forEach { prop ->
+                            putJsonObject(prop.trim()) {
+                                put("type", "string")
+                            }
+                        }
+                    }
+                }
+                apiTools.add(
+                    ApiToolDefinition(
+                        type = "function",
+                        function = ApiFunctionDef(
+                            name = tool.name,
+                            description = tool.description ?: tool.name,
+                            parameters = params
+                        )
+                    )
+                )
+                toolServerMap[tool.name] = Pair(server, tool)
+            }
+        }
+
+        return Pair(apiTools, toolServerMap)
+    }
+
+    private suspend fun executeToolCall(
+        toolName: String,
+        arguments: String,
+        toolServerMap: Map<String, Pair<McpServerConfig, McpToolInfo>>
+    ): String {
+        val client = mcpClient ?: return "MCP client not available"
+        val (server, _) = toolServerMap[toolName]
+            ?: return "Unknown tool: $toolName"
+
+        val argsJson = try {
+            Json.parseToJsonElement(arguments).jsonObject
+        } catch (e: Exception) {
+            buildJsonObject { }
+        }
+
+        return when (val result = client.callTool(server, toolName, argsJson)) {
+            is McpFetchResult.Success -> result.content
+            is McpFetchResult.Failure -> "callTool failed: ${result.reason}"
+        }
     }
 }

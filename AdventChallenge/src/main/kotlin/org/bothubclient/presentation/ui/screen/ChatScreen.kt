@@ -56,6 +56,7 @@ fun ChatScreen(viewModel: ChatViewModel, coroutineScope: CoroutineScope) {
         viewModel.loadHistory(this)
         viewModel.loadLongTermMemory(this)
         viewModel.loadUserProfile(this)
+        viewModel.collectToolCallEvents(this)
     }
 
     LaunchedEffect(viewModel.messages.size) { scrollState.scrollTo(scrollState.maxValue) }

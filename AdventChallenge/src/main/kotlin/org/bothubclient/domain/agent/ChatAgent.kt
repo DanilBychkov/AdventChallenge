@@ -3,6 +3,7 @@ package org.bothubclient.domain.agent
 import org.bothubclient.domain.entity.ChatResult
 import org.bothubclient.domain.entity.Message
 import org.bothubclient.domain.entity.SessionTokenStatistics
+import org.bothubclient.infrastructure.api.ApiToolDefinition
 
 interface ChatAgent {
     suspend fun send(
@@ -28,6 +29,19 @@ interface ChatAgent {
             systemPrompt = systemPrompt,
             temperature = temperature
         )
+
+    suspend fun sendWithTools(
+        sessionId: String,
+        contextMessages: List<Message>,
+        userMessage: String,
+        model: String,
+        systemPrompt: String,
+        temperature: Double,
+        tools: List<ApiToolDefinition>,
+        toolExecutor: suspend (toolName: String, arguments: String) -> String,
+        onToolCall: suspend (toolName: String, arguments: String, result: String, durationMs: Long) -> Unit
+    ): ChatResult =
+        sendWithContext(sessionId, contextMessages, userMessage, model, systemPrompt, temperature)
 
     suspend fun getHistory(sessionId: String): List<Message>
 
