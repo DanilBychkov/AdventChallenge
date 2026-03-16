@@ -25,6 +25,7 @@ import org.bothubclient.presentation.config.PanelSizePreferences
 import org.bothubclient.presentation.ui.components.*
 import org.bothubclient.presentation.ui.theme.BothubTheme
 import org.bothubclient.presentation.viewmodel.ChatViewModel
+import org.bothubclient.presentation.viewmodel.DocumentIndexViewModel
 import org.bothubclient.presentation.viewmodel.McpSettingsViewModel
 
 @Composable
@@ -37,7 +38,18 @@ fun ChatScreen(viewModel: ChatViewModel, coroutineScope: CoroutineScope) {
     var isProfileEditorOpen by rememberSaveable { mutableStateOf(false) }
     var isMcpSettingsOpen by rememberSaveable { mutableStateOf(false) }
     var isResultsOpen by rememberSaveable { mutableStateOf(false) }
+    var isDocIndexOpen by rememberSaveable { mutableStateOf(false) }
     val mcpSettingsViewModel = remember { McpSettingsViewModel.create() }
+    val docIndexViewModel = remember {
+        DocumentIndexViewModel.create(
+            onProjectHashChanged = { hash ->
+                org.bothubclient.infrastructure.di.ServiceLocator.compressingChatAgent.setDocumentIndexProjectHash(hash)
+            },
+            onIndexEnabledChanged = { enabled ->
+                org.bothubclient.infrastructure.di.ServiceLocator.compressingChatAgent.setDocumentIndexEnabled(enabled)
+            }
+        )
+    }
 
     var promptPanelHeight by remember {
         mutableStateOf(PanelSizePreferences.promptPanelHeight.dp)
@@ -88,6 +100,20 @@ fun ChatScreen(viewModel: ChatViewModel, coroutineScope: CoroutineScope) {
                     onClose = { isMcpSettingsOpen = false }
                 )
             }
+            if (isDocIndexOpen) {
+                DocumentIndexDialog(
+                    viewModel = docIndexViewModel,
+                    coroutineScope = coroutineScope,
+                    onClose = { isDocIndexOpen = false }
+                )
+            }
+            if (docIndexViewModel.isComparisonDialogOpen) {
+                StrategyComparisonDialog(
+                    viewModel = docIndexViewModel,
+                    coroutineScope = coroutineScope,
+                    onClose = { docIndexViewModel.closeComparisonDialog() }
+                )
+            }
             if (isResultsOpen) {
                 ResultsDialog(
                     jobs = viewModel.backgroundJobs,
@@ -119,6 +145,7 @@ fun ChatScreen(viewModel: ChatViewModel, coroutineScope: CoroutineScope) {
                 },
                 onOpenProfile = { isProfileEditorOpen = true },
                 onOpenMcpSettings = { isMcpSettingsOpen = true },
+                onOpenDocIndex = { isDocIndexOpen = true },
                 onOpenResults = {
                     viewModel.loadBackgroundJobs(coroutineScope)
                     viewModel.loadBoredReports(coroutineScope)
@@ -892,6 +919,7 @@ private fun Header(
     onProfileSelected: (org.bothubclient.presentation.viewmodel.ProfileDropdownItem) -> Unit,
     onOpenProfile: () -> Unit,
     onOpenMcpSettings: () -> Unit,
+    onOpenDocIndex: () -> Unit = {},
     onOpenResults: () -> Unit = {}
 ) {
     Row(
@@ -927,6 +955,13 @@ private fun Header(
                 Icon(
                     imageVector = Icons.Default.PlayArrow,
                     contentDescription = "Результаты",
+                    tint = MaterialTheme.colors.secondary
+                )
+            }
+            IconButton(onClick = onOpenDocIndex) {
+                Icon(
+                    imageVector = Icons.Default.List,
+                    contentDescription = "Document Index",
                     tint = MaterialTheme.colors.secondary
                 )
             }
