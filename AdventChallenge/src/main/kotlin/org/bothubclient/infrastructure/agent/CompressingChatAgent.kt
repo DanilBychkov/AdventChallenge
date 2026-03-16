@@ -68,8 +68,20 @@ class CompressingChatAgent(
     private val mcpContextOrchestrator: McpContextOrchestrator? = null,
     private val mcpClient: StdioMcpClient? = null,
     private val mcpRegistry: McpRegistry? = null,
+    private val documentContextInjector: org.bothubclient.application.docindex.DocumentContextInjector? = null,
     initialConfig: ContextConfig = ContextConfig.DEFAULT
 ) : ChatAgent, ChatAgentIntrospection {
+
+    @Volatile private var documentIndexProjectHash: String? = null
+    @Volatile private var documentIndexEnabled: Boolean = false
+
+    fun setDocumentIndexProjectHash(hash: String?) {
+        documentIndexProjectHash = hash
+    }
+
+    fun setDocumentIndexEnabled(enabled: Boolean) {
+        documentIndexEnabled = enabled
+    }
     private data class SessionMetrics(
         val compressionAttempts: AtomicLong = AtomicLong(0),
         val compressionSuccesses: AtomicLong = AtomicLong(0),
@@ -521,6 +533,29 @@ Behavior rules:
                             systemPromptWithProfile + "\n\n--- MCP context ---\n" + enriched.content +
                                     "\n\n[ОБЯЗАТЕЛЬНО: Блок «--- MCP context ---» выше не пуст — документация загружена. Ответь на вопрос пользователя по этому тексту. Запрещено писать «документация не загрузилась» или «попробуйте повторить запрос».]"
                     }
+                }
+            }
+
+            val currentHash = documentIndexProjectHash
+            val injector = documentContextInjector
+            log("Document index check: enabled=$documentIndexEnabled, hash=$currentHash, injector=${injector != null}")
+            if (documentIndexEnabled && injector != null && currentHash != null) {
+                log("Document context: starting search for hash=$currentHash")
+                val docContext = runCatching {
+                    kotlinx.coroutines.withTimeout(15_000L) {
+                        injector.getDocumentContext(
+                            query = userMessage,
+                            projectHash = currentHash
+                        )
+                    }
+                }.onFailure { e ->
+                    log("Document context injection failed: ${e::class.simpleName}: ${e.message}")
+                }.getOrNull()
+                if (docContext != null && docContext.hasContent) {
+                    systemPromptWithProfile = systemPromptWithProfile + "\n\n" + docContext.content
+                    log("Document context injected: ${docContext.chunkCount} chunks from sources: ${docContext.sources.joinToString()}")
+                } else {
+                    log("Document context: no content available")
                 }
             }
 

@@ -33,6 +33,12 @@ import org.bothubclient.infrastructure.scheduler.BackgroundJobManager
 import org.bothubclient.infrastructure.scheduler.HttpBoredClient
 import org.bothubclient.infrastructure.scheduler.LlmReportGenerator
 import org.bothubclient.infrastructure.scheduler.LlmScheduleIntentExtractor
+import org.bothubclient.application.docindex.DeleteDocumentIndexUseCase
+import org.bothubclient.application.docindex.DocumentContextInjector
+import org.bothubclient.application.docindex.IndexDocumentsUseCase
+import org.bothubclient.application.docindex.SearchDocumentsUseCase
+import org.bothubclient.domain.docindex.ChunkingStrategyType
+import org.bothubclient.infrastructure.docindex.*
 import org.bothubclient.infrastructure.repository.UserProfileRepository as InfraUserProfileRepository
 
 object ServiceLocator {
@@ -130,6 +136,41 @@ object ServiceLocator {
         McpContextOrchestrator(mcpRouter = mcpRouter, mcpClient = mcpClient)
     }
 
+    // Document Indexing
+    private val documentFileReader by lazy { DocumentFileReader() }
+    private val fixedSizeChunkingStrategy by lazy { FixedSizeChunkingStrategy() }
+    private val structuralChunkingStrategy by lazy { StructuralChunkingStrategy() }
+    private val bothubEmbeddingService by lazy {
+        BothubEmbeddingService(client = httpClient, getApiKey = { apiKeyProvider.getApiKey() })
+    }
+    private val fileDocumentIndexRepository by lazy { FileDocumentIndexRepository() }
+    private val cosineSimilaritySearchService by lazy {
+        CosineSimilaritySearchService(indexRepository = fileDocumentIndexRepository, embeddingService = bothubEmbeddingService)
+    }
+    val indexDocumentsUseCase by lazy {
+        IndexDocumentsUseCase(
+            fileReader = documentFileReader,
+            strategies = mapOf(
+                ChunkingStrategyType.FIXED_SIZE to fixedSizeChunkingStrategy,
+                ChunkingStrategyType.STRUCTURAL to structuralChunkingStrategy
+            ),
+            embeddingService = bothubEmbeddingService,
+            indexRepository = fileDocumentIndexRepository
+        )
+    }
+    val searchDocumentsUseCase by lazy {
+        SearchDocumentsUseCase(searchService = cosineSimilaritySearchService)
+    }
+    val deleteDocumentIndexUseCase by lazy {
+        DeleteDocumentIndexUseCase(indexRepository = fileDocumentIndexRepository)
+    }
+    val documentContextInjector by lazy {
+        DocumentContextInjector(searchService = cosineSimilaritySearchService)
+    }
+    val documentIndexPreferencesStorage by lazy {
+        org.bothubclient.infrastructure.persistence.DocumentIndexPreferencesStorage()
+    }
+
     val compressingChatAgent: CompressingChatAgent by lazy {
         CompressingChatAgent(
             delegate = baseChatAgent,
@@ -143,7 +184,8 @@ object ServiceLocator {
             chatHistoryStorage = chatHistoryStorage,
             mcpContextOrchestrator = mcpContextOrchestrator,
             mcpClient = mcpClient,
-            mcpRegistry = mcpRegistry
+            mcpRegistry = mcpRegistry,
+            documentContextInjector = documentContextInjector
         )
     }
 
